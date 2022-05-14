@@ -1,0 +1,32 @@
+{
+    "name": "co/loop",
+    "description": "A promise-oriented event-loop focused on interoperability.",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Co\\Loop\\": "src/"
+        },
+        "classmap": ["Loop.php"]
+    },
+    "authors": [
+        {
+            "name": "Frode Børli",
+            "email": "frode@ennerd.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "co/promise": "^1.0"
+    },
+    "scripts": {
+        "test": "vendor/bin/charm-testing"
+    },
+    "suggest": {
+        "ext-ev": "For handling more IO events concurrently",
+        "ext-pcntl": "For handling process signals"
+    },
+    "require-dev": {
+        "charm/testing": "^1.0"
+    }
+}
