@@ -1,89 +1,217 @@
 <?php
 namespace Co\Loop\Drivers;
 
-use Co\{
-    Loop,
-    Promise,
-    PromiseInterface
+use Co\Loop;
+use Closure, SplMinHeap, Ev, EvLoop, EvTimer, EvIo;
+use Co\Loop\{
+    DriverInterface,
+    EventHandle
 };
-use Co\Loop\DriverInterface;
-use Co\Loop\AbstractDriver;
-use Ev;
-use EvIo;
 
-class EvDriver extends AbstractDriver {
+class EvDriver implements DriverInterface {
 
-    private int $evActivity = 0;
+    private array $eventHandlers = [];
+    private int $eventId = 0;
 
-    public function __construct(\Closure $exceptionHandler) {
-        if (!class_exists(Ev::class, false)) {
-            throw new \Exception("This driver requires the Ev extension. Install it with `pecl install ev`.");
-        }
-        parent::__construct($exceptionHandler);
+    private bool $scheduled = false;
+    private bool $stopped = false;
+    private array $tasks = [];
+    private int $taskStart = 0;
+    private int $taskEnd = 0;
+
+    private array $microtasks = [];
+    private array $microtaskArg = [];
+    private int $microtaskStart = 0;
+    private int $microtaskEnd = 0;
+
+    private EvLoop $loop;
+
+    public function __construct(Closure $exceptionHandler) {
+        $this->exceptionHandler = $exceptionHandler;
+        $this->loop = EvLoop::defaultLoop();
     }
 
-    protected function schedule(): void {
+    public function getTime(): float {
+        return $this->loop->now();
+    }
+
+    public function run(Closure $shouldResumeFunction=null): void {
+        do {
+            $this->tick();
+        } while ($shouldResumeFunction ? $shouldResumeFunction() : false);
+    }
+
+    private function tick(): void {
+//        echo "tick time=".$this->getTime()." activity=".count($this->eventHandlers)." tasks={$this->taskStart} {$this->taskEnd} microtasks={$this->microtaskStart} {$this->microtaskEnd}\n";
+        if ($this->stopped) {
+            return;
+        }
+
+        $this->runMicrotasks();
+        if ($this->stopped) {
+            return;
+        }
+
+        if ($this->taskStart < $this->taskEnd) {
+            $this->loop->run(Ev::RUN_NOWAIT);
+        } else {
+            $this->loop->run(Ev::RUN_ONCE);
+        }
+
+        $this->runMicrotasks();
+        if ($this->stopped) {
+            return;
+        }
+
+        $taskEnd = $this->taskEnd;
+        while ($this->taskStart < $taskEnd) {
+            try {
+                ($this->tasks[$this->taskStart++])();
+            } catch (\Throwable $e) {
+                $this->stopped = true;
+                $this->handleException($e);
+                return;
+            }
+            $this->runMicrotasks();
+        }
+
+        if (
+            !empty($this->eventHandlers) ||
+            $this->taskStart < $this->taskEnd
+        ) {
+            $this->schedule();
+        }
+    }
+
+    public function defer(Closure $callback): void {
+        $this->tasks[$this->taskEnd++] = $callback;
+        if (!$this->scheduled) {
+            $this->schedule();
+        }
+    }
+
+    public function queueMicrotask(Closure $callback, $argument=null): void {
+        $this->microtasks[$this->microtaskEnd] = $callback;
+        $this->microtaskArg[$this->microtaskEnd++] = $argument;
+        $this->schedule();
+    }
+
+    public function delay(float $delay, Closure $callback): EventHandle {
+        $eventId = $this->eventId++;
+
+        $this->eventHandlers[$eventId] = $this->loop->timer($delay, 0.0, function() use ($eventId, $callback) {
+            // invoker
+            unset($this->eventHandlers[$eventId]);
+            $this->queueMicrotask($callback);
+            $this->runMicrotasks();
+        });
+
+        $this->schedule();
+
+        return EventHandle::for($this, $eventId);
+    }
+
+    public function readable($resource, Closure $callback): EventHandle {
+        $eventId = $this->eventId++;
+        $eh = EventHandle::for($this, $eventId);
+
+        $this->eventHandlers[$eventId] = $this->loop->io($resource, Ev::READ, function($a) use ($resource, $callback, $eh) {
+            if (!\is_resource($resource)) {
+                $eh->cancel();
+            }
+            // invoker
+            $this->queueMicrotask($callback, $resource);
+            $this->runMicrotasks();
+        });
+
+        $this->schedule();
+
+        return $eh;
+    }
+
+    public function writable($resource, Closure $callback): EventHandle {
+        $eh = EventHandle::for($this, $this->eventId++);
+
+        $this->eventHandlers[$eh->getId()] = $this->loop->io($resource, Ev::WRITE, function() use ($resource, $callback, $eh) {
+            if (!\is_resource($resource)) {
+                $eh->cancel();
+            }
+            // invoker
+            $this->queueMicrotask($callback, $resource);
+            $this->runMicrotasks();
+        });
+
+        $this->schedule();
+
+        return EventHandle::for($this, $eventId);
+    }
+
+    public function signal(int $signalNumber, Closure $callback): EventHandle {
+        $eventId = $this->eventId++;
+
+        $this->eventHandlers[$eventId] = $this->loop->signal($signalNumber, function() {
+            $this->queueMicrotask($callback, $signalNumber);
+            $this->runMicrotasks();
+        });
+
+        $this->schedule();
+
+        return EventHandle::for($this, $eventId);
+    }
+
+    public function cancel(int $eventId): void {
+        if (isset($this->eventHandlers[$eventId])) {
+            $this->eventHandlers[$eventId]->stop();
+            unset($this->eventHandlers[$eventId]);
+        }
+    }
+
+    public function suspend(int $eventId): ?Closure {
+        if (!isset($this->eventHandlers[$eventId])) {
+            return null;
+        }
+        if ($this->eventHandlers[$eventId] instanceof EvTimer) {
+            return null;
+        }
+
+        $eventHandlers = &$eventHandlers;
+        $event = $this->eventHandlers[$eventId];
+        unset($this->eventHandlers[$eventId]);
+        $event->stop();
+        return function() use ($event, $eventId) {
+            $event->start();
+            $this->eventHandlers[$eventId] = $event;
+            $this->schedule();
+        };
+    }
+
+    private function handleException(\Throwable $e) {
+        ($this->exceptionHandler)($e);
+    }
+
+    private function runMicrotasks(): void {
+        while ($this->microtaskStart < $this->microtaskEnd) {
+            try {
+                ($this->microtasks[$this->microtaskStart])($this->microtaskArg[$this->microtaskStart]);
+            } catch (\Throwable $e) {
+                $this->stopped = true;
+                ++$this->microtaskStart;
+                $this->handleException($e);
+                return;
+            }
+            ++$this->microtaskStart;
+        }
+    }
+
+    private function schedule(): void {
         if ($this->scheduled) {
             return;
         }
         $this->scheduled = true;
-        \register_shutdown_function($this->tick(...));
-    }
-
-    protected function tick(): void {
-        Ev::run(Ev::RUN_NOWAIT);
-
-        if (
-            $this->evActivity > 0
-        ) {
-            $this->schedule();
-        }
-
-        parent::tick();
-    }
-
-    public function readable($resource): PromiseInterface {
-        $promise = new Promise();
-        $event = new EvIo($resource, Ev::READ, function() use ($resource, $promise) {
-            $promise->fulfill($resource);
+        \register_shutdown_function(function() {
+            $this->scheduled = false;
+            $this->tick();
         });
-        $cancelHandler = function() use ($event) {
-            --$this->evActivity;
-            $event->stop();
-        };
-        $promise->then($cancelHandler, $cancelHandler);
-        $this->schedule();
-        ++$this->evActivity;
-        return $promise;
     }
 
-    public function writable($resource): PromiseInterface {
-        $promise = new Promise();
-        $event = new EvIo($resource, Ev::WRITE, function() use ($resource, $promise) {
-            $promise->fulfill($resource);
-        });
-        $cancelHandler = function() use ($event) {
-            --$this->evActivity;
-            $event->stop();
-        };
-        $promise->then($cancelHandler, $cancelHandler);
-        $this->schedule();
-        ++$this->evActivity;
-        return $promise;
-    }
-
-    public function signal(int $signalNumber): PromiseInterface {
-        $promise = new Promise();
-        $event = new EvSignal($signalNumber, function() use ($signalNumber, $promise) {
-            $promise->fulfill($signalNumber);
-        });
-        $cancelHandler = function() use ($event) {
-            --$this->evActivity;
-            $event->stop();
-        };
-        $promise->then($cancelHandler, $cancelHandler);
-        $this->schedule();
-        ++$this->evActivity;
-        return $promise;
-    }
 }

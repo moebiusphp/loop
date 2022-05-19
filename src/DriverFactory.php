@@ -1,27 +1,46 @@
 <?php
 namespace Co\Loop;
 
-class DriverFactory {
+use Closure;
+use Composer\Semver\VersionParser;
+use Composer\InstalledVersions;
+
+class DriverFactory implements FactoryInterface {
+
+    private static $factory = null;
+
+    public static function getFactory(): FactoryInterface {
+        if (self::$factory === null) {
+            self::$factory = new self();
+        }
+        return self::$factory;
+    }
+
+    public static function setFactory(FactoryInterface $factory): void {
+        self::$factory = $factory;
+    }
 
     /**
-     * Selects a driver for running the event loop by prioritizing
-     * the most popular drivers first, and finally falling back to
-     * stand-alone drivers.
+     * Create a new driver based on detected criteria.
      */
-    public static function getDriver(callable $exceptionHandler): DriverInterface {
-        if (class_exists(\React\EventLoop\Loop::class)) {
+    public function getDriver(): DriverInterface {
+        $exceptionHandler = $this->getExceptionHandler();
+
+        if (InstalledVersions::isInstalled('react/event-loop') && InstalledVersions::satisfies(new VersionParser, 'react/event-loop', '>=1.2 <2.0')) {
             return new Drivers\ReactDriver($exceptionHandler);
-        }
-        if (class_exists(\Amp\Loop::class)) {
-            return new Drivers\AmpLoop($exceptionHandler);
-        }
-        if (class_exists(\Revolt\EventLoop::class)) {
-            return new Drivers\RevoltDriver($exceptionHandler);
-        }
-        if (class_exists(\Ev::class, false)) {
+        } elseif (InstalledVersions::isInstalled('amphp/amp') && InstalledVersions::satisfies(new VersionParser, 'amphp/amp', '>=2.1 <3.0')) {
+            return new Drivers\AmpDriver($exceptionHandler);
+        } elseif (false && class_exists(\Ev::class)) {
             return new Drivers\EvDriver($exceptionHandler);
+        } else {
+            return new Drivers\StreamSelectDriver($exceptionHandler);
         }
-        return new Drivers\StreamSelectDriver($exceptionHandler);
+    }
+
+    public function getExceptionHandler(): Closure {
+        return static function(\Throwable $e) {
+            fwrite(STDERR, gmdate('Y-m-d H:i:s').' ['.get_class($e).' #'.$e->getCode().'] '.$e->getMessage().' in '.$e->getFile().':'.$e->getLine()."\n\t".strtr($e->getMessage(), ["\n" => "\n\t"])."\n");
+        };
     }
 
 }

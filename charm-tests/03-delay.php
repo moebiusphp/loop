@@ -2,12 +2,12 @@
 require(__DIR__.'/../vendor/autoload.php');
 use Co\Loop;
 
-Loop::delay(0.1)->then(function() {
+$a = Loop::delay(0.1, function() {
     echo "C\n";
 });
-Loop::delay(0.05)->then(function() {
+$b = Loop::delay(0.05, function() {
     echo "B";
 });
-Loop::defer(function() {
+$c = Loop::defer(function() {
     echo "A";
 });

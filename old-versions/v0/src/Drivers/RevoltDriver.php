@@ -18,11 +18,14 @@ class RevoltDriver extends AbstractDriver {
             return;
         }
         if (!$this->registered) {
+            $this->registered = true;
             \register_shutdown_function(Revolt::run(...));
         }
         $this->scheduled = true;
         Revolt::defer($this->tick(...));
     }
+
+    public function onTick(): void {}
 
     public function signal(int $signalNumber): PromiseInterface {
         $promise = new Promise();

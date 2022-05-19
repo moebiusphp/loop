@@ -1,50 +1,59 @@
 <?php
 namespace Co\Loop;
 
-use Co\PromiseInterface;
+use Closure;
 
 interface DriverInterface {
 
     /**
-     * Schedule a function to run.
+     * Get the current event loop time
      */
-    public function defer(callable $callback): void;
+    public function getTime(): float;
 
     /**
-     * Run a callback when the process receives a signal.
+     * Run one iteration of ticks
      */
-    public function signal(int $signalNumber): PromiseInterface;
+    public function run(Closure $shouldResumeFunction=null): void;
 
     /**
-     * Return a promise which will be resolved after
-     * a time has elapsed.
+     * Schedule a callback to be executed on the next iteration of the event
+     * loop.
      */
-    public function delay(float $time): PromiseInterface;
+    public function defer(Closure $callback): void;
 
     /**
-     * Return a promise which will be resolved when
-     * a resource becomes readable.
+     * Schedule a callback to be executed as soon as possible following the
+     * currently executing callback and any other queued microtasks.
      */
-    public function readable($resource): PromiseInterface;
+    public function queueMicrotask(Closure $callback): void;
 
     /**
-     * Return a promise which will be resolved when
-     * a resource becomes writable.
+     * Schedule a callback to be executed in $time seconds.
      */
-    public function writable($resource): PromiseInterface;
+    public function delay(float $time, Closure $callback): EventHandle;
 
     /**
-     * Stop the event loop from processing events
+     * Enqueue the provided callback as a microtask whenever a stream resource
+     * becomes readable. The callbacks stop when the resource is closed or when
+     * the returned callback is invoked.
      */
-    public function stop(): void;
+    public function readable(mixed $resource, Closure $callback): EventHandle;
 
     /**
-     * Is the event loop stopped?
+     * Enqueue the provided callback as a microtask whenever a stream resource
+     * becomes writable. The callbacks stop when the resource is closed or when
+     * the returned callback is invoked.
      */
-    public function isStopped(): bool;
+    public function writable(mixed $resource, Closure $callback): EventHandle;
 
     /**
-     * Start the event loop again, after stopping it.
+     * Enqueue the provided callback as a microtask whenever a signal is received by
+     * the process. The callbacks stop when the resource is closed or when the 
+     * returned callback is invoked.
      */
-    public function start(): void;
+    public function signal(int $signalNumber, Closure $callback): EventHandle;
+
+    public function cancel(int $eventId): void;
+    public function suspend(int $eventId): ?Closure;
+
 }

@@ -1,101 +1,134 @@
 <?php
 namespace Co;
 
-use Co\Loop\DriverFactory;
-use Co\Loop\Drivers;
-use Co\Loop\DriverInterface;
+use Closure;
+
+use Co\Loop\{
+    DriverInterface,
+    DriverFactory,
+    EventHandle,
+    TimeoutException,
+    RejectedException
+};
 
 final class Loop {
-    private static ?DriverInterface $driver = null;
 
-    /**
-     * Schedule a callback to be executed later
-     */
-    public static function defer(callable $callback): void {
-        self::getDriver()->defer($callback);
+    private static $driver = null;
+
+    public static function getTime(): float {
+        return self::get()->getTime();
     }
 
-    /**
-     * Queue a callback to run immediately after the current
-     * callback completes
-     */
-    public static function queueMicrotask(callable $callback): void {
-        self::getDriver()->queueMicrotask($callback);
-    }
+    public static function await(object $promise, float $timeout=null) {
+        $status = null;
+        $result = null;
 
-    /**
-     * Return a promise which is fulfilled when a stream resource
-     * becomes readable.
-     */
-    public static function readable($resource, float $timeout=null): PromiseInterface {
-        return self::getDriver()->readable($resource, $timeout);
-    }
+        $expiration = $timeout !== null ? self::getTime() + $timeout : null;
 
-    /**
-     * Return a promise which is fulfilled when a stream resource
-     * becomes readable.
-     */
-    public static function writable($resource, float $timeout=null): PromiseInterface {
-        return self::getDriver()->writable($resource, $timeout);
-    }
-
-    /**
-     * Return a promise which is fulfilled when a number of seconds
-     * have passed.
-     */
-    public static function delay(float $timeout): PromiseInterface {
-        return self::getDriver()->delay($timeout);
-    }
-
-    /**
-     * Return a promise which is fulfilled when a signal is received
-     * by the process. Requires ext-pcntl.
-     */
-    public static function signal(int $signal): PromiseInterface {
-        return self::getDriver()->signal($signal);
-    }
-
-    /**
-     * Function is invoked to run events when PHP shuts down.
-     */
-    private static function onShutdown(): void {
-        if (self::getDriver()->isStopped()) {
-            return;
-        }
-        $callbacks = self::$callbacks;
-        self::$callbacks = [];
-        $l = count($callbacks);
-        for ($i = 0; $i < $l; $i++) {
-            try {
-                $callbacks[$i]();
-            } catch (\Throwable $e) {
-                self::$callbacks = array_merge(array_slice($callbacks, $i+1), self::$callbacks);
-                self::onException($e);
-                return;
-            }
-            while (self::$microTasks !== []) {
-                try {
-                    (array_shift(self::$microTasks))();
-                } catch (\Throwable $e) {
-                    self::onException($e);
-                    return;
+        $promise->then(
+            static function($value) use (&$status, &$result) {
+                if ($status === null) {
+                    $status = true;
+                    $result = $value;
+                }
+            },
+            static function($reason) use (&$status, &$result) {
+                if ($status === null) {
+                    $status = false;
+                    $result = $reason;
                 }
             }
-        }
-        if (self::$callbacks !== []) {
-            self::getDriver()->defer($callback);
+        );
+
+        self::run(function() use (&$status, &$result) {
+            return $status === null;
+        });
+
+        if ($status === true) {
+            return $result;
+        } elseif ($status === false) {
+            if ($result instanceof \Throwable) {
+                throw $result;
+            } else {
+                throw new RejectedException($result);
+            }
+        } else {
+            throw new TimeoutException("Await timed out after $timeout seconds");
         }
     }
 
-    private static function onException(\Throwable $e): void {
-        self::getDriver()->stop();
-        echo "\n".get_class($e).": ".$e->getMessage()."\n".$e->getTraceAsString()."\n";
+    /**
+     * Run the loop as long as $shouldResumeFunction returns true. If no
+     * function is provided, the loop will run until no more events are
+     * are pending.
+     */
+    public static function run(Closure $shouldResumeFunction=null): void {
+        self::get()->run($shouldResumeFunction);
     }
 
-    private static function getDriver(): DriverInterface {
+    /**
+     * Schedule a callback to be executed on the next iteration of the event
+     * loop, or delay according to $delay.
+     */
+    public static function defer(Closure $callback): void {
+        self::get()->defer($callback);
+    }
+
+    /**
+     * Schedule a callback to be executed as soon as possible following the
+     * currently executing callback and any other queued microtasks.
+     */
+    public static function queueMicrotask(Closure $callback): void {
+        self::get()->queueMicrotask($callback);
+    }
+
+    /**
+     * Schedule a callback to run after $time seconds.
+     */
+    public static function delay(float $time, Closure $callback): EventHandle {
+        return self::get()->delay($time, $callback);
+    }
+
+    /**
+     * Enqueue the provided callback as a microtask whenever a stream resource
+     * becomes readable. The callbacks stop when the resource is closed or when
+     * the returned callback is invoked.
+     */
+    public static function readable(mixed $resource, Closure $callback): EventHandle {
+        return self::get()->readable($resource, $callback);
+    }
+
+    /**
+     * Enqueue the provided callback as a microtask whenever a stream resource
+     * becomes writable. The callbacks stop when the resource is closed or when
+     * the returned callback is invoked.
+     */
+    public static function writable(mixed $resource, Closure $callback): EventHandle {
+        return self::get()->writable($resource, $callback);
+    }
+
+    /**
+     * Enqueue the provided callback as a microtask whenever a signal is received by
+     * the process. The callbacks stop when the resource is closed or when the 
+     * returned callback is invoked.
+     */
+    public static function signal(int $signalNumber, Closure $callback): EventHandle {
+        return self::get()->signal($signalNumber, $callback);
+    }
+
+    /**
+     * Return the best driver instance available.
+     */
+    private static function get(): Loop\DriverInterface {
         if (self::$driver === null) {
-            self::$driver = DriverFactory::getDriver(self::onException(...));
+            $factory = DriverFactory::getFactory();
+            self::$driver = $factory->getDriver();
         }
         return self::$driver;
     }
+
+    public static function setDriver(Loop\DriverInterface $driver): void {
+        self::$driver = $driver;
+    }
+
 }
