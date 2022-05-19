@@ -18,8 +18,7 @@
     "minimum-stability": "stable",
     "require": {
         "co/promise": "^1.0",
-        "composer/semver": "^3.3",
-        "amphp/amp": "^2.6"
+        "composer/semver": "^3.3"
     },
     "scripts": {
         "test": "vendor/bin/charm-testing"
