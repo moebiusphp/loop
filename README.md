@@ -25,7 +25,7 @@ TLRD
 A primitive example to illustrate how to write asynchronous
 code with `Co\Loop`.
 
-```
+```php
 <?php
 require('vendor/autoload.php');
 
