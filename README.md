@@ -19,11 +19,97 @@ PHP 8.1. With Moebius you will be able to use coroutines in
 your existing projects - even if they don't use an event loop
 today.
 
+
+Laravel example
+---------------
+
+Co\Loop can be used with most frameworks such as Laravel
+or Symfony. The only challenge with using asynchronous code
+with these frameworks, is that the framework will not wait
+for your promises to finish.
+
+The solution is to use the `Co\Loop::await($promise)` 
+function. As long as all the code that is asynchronous is
+written to use `Co\Loop` directly, or written for either
+React or Amp - then you can use `Co\Loop` to resolve the
+promise.
+
+```php
+<?php
+namespace App\Http\Controllers;
+ 
+use Co\Loop;
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Models\Profile;
+ 
+class UserController extends Controller
+{
+    public function show($id)
+    {
+        /**
+         * Go get a performance boost:
+         *
+         * We MUST use async functions which return a promise,
+         * and internally use the event-loop API to wait for
+         * IO resources to become readable or writable.
+         */
+        $user = User::asyncFindOrFail($id);
+        $profile = Profile::asyncFindOrFail($id);
+
+        /**
+         * Also we SHOULD send off as many async calls as possible
+         * before using the `Loop::await()` function to resolve
+         * these promises.
+         *
+         * Both promises we created above will be running while you
+         * await the `$user` promise. The `$profile` promise may
+         * even finish first - but that does not matter below:
+         */
+        return view('user.profile', [
+            'user' => Loop::await($user),
+            'profile' => Loop::await($profile),
+        ]);
+    }
+}
+```
+
+As you can see, it is easy to use asynchronous code within any
+framework.
+
+*COMING*
+
+We are working on our Moebius framework, which will make all your
+existing code asynchronous automatically using PHP 8.1 Fibers. 
+
+You'll simply be calling `Co\Loop::async(User::findOrFail($id))`
+in the above example. A working prototype is available at
+https://packagist.org/packages/moebius/coroutine
+
+```php
+    use Moebius\Coroutine as Co;
+
+    public function show($id)
+    {
+        $user = Co::go(User::findOrFail(...), $id);
+        $profile = Co::go(User::findOrFail(...), $id);
+
+        return view('user.profile', [
+            'user' => Co::await($user),
+            'profile' => Co::await($profile)
+        ]);
+    }
+```
+
 TLRD
 ----
 
 A primitive example to illustrate how to write asynchronous
 code with `Co\Loop`.
+
+> This code will run with both Amp and React, and if you are
+> not using one of these in a more classic environment such
+> as Laravel or Symfony.
 
 ```php
 <?php
@@ -34,7 +120,7 @@ require('vendor/autoload.php');
  * be available eventually. It will immediately return a Promise
  * object which is a *promise about a future value*.
  */
-function read_file(string $filename) {
+function async_read_file(string $filename) {
     return new Co\Promise(function($ready, $failure) use ($filename) {
         // Open the file in read non-blocking mode
         $fp = fopen($filename, 'rn');
@@ -55,8 +141,8 @@ function read_file(string $filename) {
 /**
  * Now we will read two files in parallel using our above function.
  */
-$file1 = read_file('file-1.txt');
-$file2 = read_file('file-2.txt');
+$file1 = async_read_file('file-1.txt');
+$file2 = async_read_file('file-2.txt');
 
 /**
  * ALTERNATIVE 1
