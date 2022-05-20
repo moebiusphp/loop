@@ -19,6 +19,75 @@ PHP 8.1. With Moebius you will be able to use coroutines in
 your existing projects - even if they don't use an event loop
 today.
 
+TLRD
+----
+
+A primitive example to illustrate how to write asynchronous
+code with `Co\Loop`.
+
+```
+<?php
+require('vendor/autoload.php');
+
+/**
+ * This function returns a Promise about something that will
+ * be available eventually. It will immediately return a Promise
+ * object which is a *promise about a future value*.
+ */
+function read_file(string $filename) {
+    return new Co\Promise(function($ready, $failure) use ($filename) {
+        // Open the file in read non-blocking mode
+        $fp = fopen($filename, 'rn');
+
+        // Wait for the file to become readable
+        Co\Loop::readable($fp, function($fp) use ($ready) {
+
+            // Call the $ready callback with the value
+            $ready(stream_get_contents($fp));
+
+            // Close the file
+            fclose($fp);
+
+        });
+    });    
+}
+
+/**
+ * Now we will read two files in parallel using our above function.
+ */
+$file1 = read_file('file-1.txt');
+$file2 = read_file('file-2.txt');
+
+/**
+ * ALTERNATIVE 1
+ * 
+ * The traditional way of waiting for results from a promise is via 
+ * the "then" method. This can lead to the well known "callback hell".
+ */
+$file1->then(function($contents) {
+    echo "FILE 1: ".$contents."\n\n";
+}, function($error) {
+    echo "Failed to read file 1\n";
+});
+$file2->then(function($contents) {
+    echo "FILE 2: ".$contents."\n\n";
+}, function($error) {
+    echo "Failed to read file 1\n";
+});
+
+
+/**
+ * ALTERNATIVE 2
+ *
+ * A much easier approach to waiting for promises is to use the
+ * `Co\Loop::await()` function. It will block your application,
+ * while allowing promises to run - until the promise is fulfilled
+ * or rejected.
+ */
+echo "FILE 1: ".Co\Loop::await($file1);
+echo "FILE 2: ".Co\Loop::await($file2);
+```
+
 
 The entire API
 --------------
