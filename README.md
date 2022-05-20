@@ -89,15 +89,6 @@ $signal->then(function() {
 });
 ```
 
-The promise API removes all listeners when the promise is fulfilled,
-so you have to resubscribe to continue listening. This enables a
-cool way to work with events:
-
-```
-$fp = fopen(__FILE__, 'r');
-$readable = new Co\Loop\Readable($fp);
-while (!feof($fp) && Co\Loop::await($readable)) {
-    echo fgets($fp, 4096);
-}
-```
+Promise classes exists for Readable, Writable, Signal, Delay and
+Interval.
 

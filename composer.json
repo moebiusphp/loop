@@ -21,7 +21,8 @@
         "composer/semver": "^3.3"
     },
     "scripts": {
-        "test": "vendor/bin/charm-testing"
+        "test": "vendor/bin/charm-testing",
+        "test-all": "bin/test-all.php"
     },
     "suggest": {
         "ext-ev": "For handling more IO events concurrently",
