@@ -1,6 +1,11 @@
 {
     "name": "co/loop",
-    "description": "A promise-oriented event-loop focused on interoperability.",
+    "description": "A solid event-loop API for writing applications that work across frameworks such as Amp or React, Slim, CodeIgniter, Laravel and Symfony.",
+    "keywords": [
+        "event-loop", "eventloop", "async", "await", "asynchronous", "event", "concurrency", "asyncio", "awaitable", "coroutine", "reactor",
+        "timer", "timeout", "setTimeout", "queueMicrotask", "delay", "promise"
+    ],
+    "homepage": "https://github.com/moebiusphp/loop",
     "type": "library",
     "license": "MIT",
     "autoload": {

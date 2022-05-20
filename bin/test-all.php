@@ -145,7 +145,7 @@ if (empty($errors)) {
 }
 */
 function run_tests() {
-    passthru("cd ".escapeshellarg(dirname(__DIR__))."; composer -n -- test --summary 2> /dev/null", $result_code);
+    passthru("cd ".escapeshellarg(dirname(__DIR__))."; composer -n -- test --no-linting --no-git --summary 2> /dev/null", $result_code);
     return $result_code === 0;
 }
 
