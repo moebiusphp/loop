@@ -1,4 +1,4 @@
-Co\Loop
+Moebius\Loop
 =======
 
 An event loop focused on interoperability between the most
@@ -23,22 +23,22 @@ today.
 Laravel example
 ---------------
 
-Co\Loop can be used with most frameworks such as Laravel
+Moebius\Loop can be used with most frameworks such as Laravel
 or Symfony. The only challenge with using asynchronous code
 with these frameworks, is that the framework will not wait
 for your promises to finish.
 
-The solution is to use the `Co\Loop::await($promise)` 
+The solution is to use the `Moebius\Loop::await($promise)` 
 function. As long as all the code that is asynchronous is
-written to use `Co\Loop` directly, or written for either
-React or Amp - then you can use `Co\Loop` to resolve the
+written to use `Moebius\Loop` directly, or written for either
+React or Amp - then you can use `Moebius\Loop` to resolve the
 promise.
 
 ```php
 <?php
 namespace App\Http\Controllers;
  
-use Co\Loop;
+use Moebius\Loop;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Profile;
@@ -82,7 +82,7 @@ framework.
 We are working on our Moebius framework, which will make all your
 existing code asynchronous automatically using PHP 8.1 Fibers. 
 
-You'll simply be calling `Co\Loop::async(User::findOrFail($id))`
+You'll simply be calling `Moebius\Loop::async(User::findOrFail($id))`
 in the above example. A working prototype is available at
 https://packagist.org/packages/moebius/coroutine
 
@@ -105,7 +105,7 @@ TLRD
 ----
 
 A primitive example to illustrate how to write asynchronous
-code with `Co\Loop`.
+code with `Moebius\Loop`.
 
 > This code will run with both Amp and React, and if you are
 > not using one of these in a more classic environment such
@@ -121,12 +121,12 @@ require('vendor/autoload.php');
  * object which is a *promise about a future value*.
  */
 function async_read_file(string $filename) {
-    return new Co\Promise(function($ready, $failure) use ($filename) {
+    return new Moebius\Promise(function($ready, $failure) use ($filename) {
         // Open the file in read non-blocking mode
         $fp = fopen($filename, 'rn');
 
         // Wait for the file to become readable
-        Co\Loop::readable($fp, function($fp) use ($ready) {
+        Moebius\Loop::readable($fp, function($fp) use ($ready) {
 
             // Call the $ready callback with the value
             $ready(stream_get_contents($fp));
@@ -166,41 +166,41 @@ $file2->then(function($contents) {
  * ALTERNATIVE 2
  *
  * A much easier approach to waiting for promises is to use the
- * `Co\Loop::await()` function. It will block your application,
+ * `Moebius\Loop::await()` function. It will block your application,
  * while allowing promises to run - until the promise is fulfilled
  * or rejected.
  */
-echo "FILE 1: ".Co\Loop::await($file1);
-echo "FILE 2: ".Co\Loop::await($file2);
+echo "FILE 1: ".Moebius\Loop::await($file1);
+echo "FILE 2: ".Moebius\Loop::await($file2);
 ```
 
 
 The entire API
 --------------
 
-`Co\Loop::defer(callable $callback)` will schedule callback
+`Moebius\Loop::defer(callable $callback)` will schedule callback
 to be executed next.
 
-`Co\Loop::queueMicrotask(callable $callback)` will schedule
+`Moebius\Loop::queueMicrotask(callable $callback)` will schedule
 a callback to be executed as soon as possible - before any
 deferred callbacks.
 
-`Co\Loop::delay(float $time, callable $callback): EventHandle`
+`Moebius\Loop::delay(float $time, callable $callback): EventHandle`
 will schedule a callback to be executed later.
 
-`Co\Loop::readable(resource $fd, callable $callback): EventHandle`
+`Moebius\Loop::readable(resource $fd, callable $callback): EventHandle`
 will schedule a callback to be executed whenever `$fd` becomes
 readable.
 
-`Co\Loop::writable(resource $fd, callable $callback): EventHandle`
+`Moebius\Loop::writable(resource $fd, callable $callback): EventHandle`
 will schedule a callback to be executed whenever `$fd` becomes
 writable.
 
-`Co\Loop::signal(int $signum, callable $callback): EventHandle`
+`Moebius\Loop::signal(int $signum, callable $callback): EventHandle`
 will schedule a callback to be executed whenever the application
 receives a signal.
 
-`Co\Loop::run(callable $keepRunningFunc=null): void` will run
+`Moebius\Loop::run(callable $keepRunningFunc=null): void` will run
 the event loop until the `$keepRunningFunc` returns false or
 the event loop is empty.
 
@@ -235,10 +235,10 @@ Promise-based API
 -----------------
 
 You can listen for events using a Promise-based API. For example
-you can listen for signals using the `Co\Loop\Signal` class:
+you can listen for signals using the `Moebius\Loop\Signal` class:
 
 ```
-$signal = new Co\Loop\Signal(SIGTERM);
+$signal = new Moebius\Loop\Signal(SIGTERM);
 $signal->then(function() {
     echo "We received a SIGTERM signal\n";
 });
