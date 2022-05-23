@@ -77,29 +77,6 @@ class UserController extends Controller
 As you can see, it is easy to use asynchronous code within any
 framework.
 
-*COMING*
-
-We are working on our Moebius framework, which will make all your
-existing code asynchronous automatically using PHP 8.1 Fibers. 
-
-You'll simply be calling `Moebius\Loop::async(User::findOrFail($id))`
-in the above example. A working prototype is available at
-https://packagist.org/packages/moebius/coroutine
-
-```php
-    use Moebius\Coroutine as Co;
-
-    public function show($id)
-    {
-        $user = Co::go(User::findOrFail(...), $id);
-        $profile = Co::go(User::findOrFail(...), $id);
-
-        return view('user.profile', [
-            'user' => Co::await($user),
-            'profile' => Co::await($profile)
-        ]);
-    }
-```
 
 TLRD
 ----
