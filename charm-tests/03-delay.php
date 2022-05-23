@@ -1,6 +1,6 @@
 <?php
 require(__DIR__.'/../vendor/autoload.php');
-use Co\Loop;
+use Moebius\Loop;
 
 $a = Loop::delay(0.1, function() {
     echo "C\n";

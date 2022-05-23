@@ -1,9 +1,9 @@
 <?php
-namespace Co\Loop\Drivers;
+namespace Moebius\Loop\Drivers;
 
-use Co\Loop;
+use Moebius\Loop;
 use Closure, SplMinHeap;
-use Co\Loop\{
+use Moebius\Loop\{
     DriverInterface,
     EventHandle
 };

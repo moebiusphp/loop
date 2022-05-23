@@ -1,7 +1,7 @@
 <?php
 require(__DIR__.'/../vendor/autoload.php');
 
-use Co\Loop;
+use Moebius\Loop;
 
 $promise = new class {
     public $fulfill, $resolve;

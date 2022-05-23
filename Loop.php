@@ -1,9 +1,9 @@
 <?php
-namespace Co;
+namespace Moebius;
 
 use Closure;
 
-use Co\Loop\{
+use Moebius\Loop\{
     DriverInterface,
     DriverFactory,
     EventHandle,
@@ -19,6 +19,7 @@ final class Loop {
         return self::get()->getTime();
     }
 
+/*
     public static function await(object $promise, float $timeout=null) {
         $status = null;
         $result = null;
@@ -56,6 +57,7 @@ final class Loop {
             throw new TimeoutException("Await timed out after $timeout seconds");
         }
     }
+*/
 
     /**
      * Run the loop as long as $shouldResumeFunction returns true. If no
@@ -78,8 +80,8 @@ final class Loop {
      * Schedule a callback to be executed as soon as possible following the
      * currently executing callback and any other queued microtasks.
      */
-    public static function queueMicrotask(Closure $callback): void {
-        self::get()->queueMicrotask($callback);
+    public static function queueMicrotask(Closure $callback, mixed $argument=null): void {
+        self::get()->queueMicrotask($callback, $argument);
     }
 
     /**

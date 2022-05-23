@@ -1,8 +1,8 @@
 <?php
 require(__DIR__.'/../vendor/autoload.php');
 
-use Co\Loop;
-use Co\Loop\Readable;
+use Moebius\Loop;
+use Moebius\Loop\Readable;
 
 $fp = fopen(__FILE__, 'rn');
 

@@ -1,7 +1,7 @@
 <?php
-namespace Co\Loop;
+namespace Moebius\Loop;
 
-use Co\Loop;
+use Moebius\Loop;
 
 class Interval extends AbstractWatcher {
 

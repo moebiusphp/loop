@@ -1,5 +1,5 @@
 <?php
-namespace Co\Loop;
+namespace Moebius\Loop;
 
 class TimeoutException extends \Exception {
 

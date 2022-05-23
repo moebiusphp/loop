@@ -1,5 +1,5 @@
 <?php
-namespace Co\Loop;
+namespace Moebius\Loop;
 
 use Closure;
 use Composer\Semver\VersionParser;

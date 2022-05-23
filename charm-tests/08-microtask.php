@@ -1,6 +1,7 @@
 <?php
 require(__DIR__.'/../vendor/autoload.php');
-use Co\Loop;
+
+use Moebius\Loop;
 
 Loop::queueMicrotask(function() {
     echo "B";

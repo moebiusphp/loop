@@ -1,8 +1,8 @@
 <?php
-namespace Co\Loop\Drivers;
+namespace Moebius\Loop\Drivers;
 
 use Closure;
-use Co\Loop\{
+use Moebius\Loop\{
     DriverInterface,
     EventHandle
 };

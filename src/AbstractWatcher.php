@@ -1,10 +1,10 @@
 <?php
-namespace Co\Loop;
+namespace Moebius\Loop;
 
 use Closure;
-use Co\Loop;
-use Co\Promise;
-use Co\PromiseInterface;
+use Moebius\Loop;
+use Moebius\Promise;
+use Moebius\PromiseInterface;
 
 abstract class AbstractWatcher implements PromiseInterface {
 

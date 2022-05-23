@@ -1,5 +1,5 @@
 <?php
-namespace Co\Loop;
+namespace Moebius\Loop;
 
 final class EventHandle {
     private static $pool = [];

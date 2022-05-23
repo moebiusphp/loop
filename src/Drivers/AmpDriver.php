@@ -1,9 +1,9 @@
 <?php
-namespace Co\Loop\Drivers;
+namespace Moebius\Loop\Drivers;
 
 use Closure;
-use Co\Loop\EventHandle;
-use Co\Loop\DriverInterface;
+use Moebius\Loop\EventHandle;
+use Moebius\Loop\DriverInterface;
 
 class AmpDriver implements DriverInterface {
 
