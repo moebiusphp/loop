@@ -10,7 +10,7 @@
     "license": "MIT",
     "autoload": {
         "psr-4": {
-            "Co\\Loop\\": "src/"
+            "Moebius\\Loop\\": "src/"
         },
         "classmap": ["Loop.php"]
     },

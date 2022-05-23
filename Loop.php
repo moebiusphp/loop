@@ -19,7 +19,6 @@ final class Loop {
         return self::get()->getTime();
     }
 
-/*
     public static function await(object $promise, float $timeout=null) {
         $status = null;
         $result = null;
@@ -57,7 +56,6 @@ final class Loop {
             throw new TimeoutException("Await timed out after $timeout seconds");
         }
     }
-*/
 
     /**
      * Run the loop as long as $shouldResumeFunction returns true. If no
