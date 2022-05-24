@@ -28,8 +28,12 @@ final class EventHandle {
         return $this->resumeFunction !== null;
     }
 
+    public function isCancelled(): bool {
+        return $this->id === null;
+    }
+
     public function cancel(): void {
-        if (null === $this->id) {
+        if ($this->isCancelled()) {
             throw new \LogicException("EventHandle has already been cancelled");
         }
         if ($this->resumeFunction) {

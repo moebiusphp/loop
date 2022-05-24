@@ -27,12 +27,16 @@ class DriverFactory implements FactoryInterface {
         $exceptionHandler = $this->getExceptionHandler();
 
         if (InstalledVersions::isInstalled('react/event-loop') && InstalledVersions::satisfies(new VersionParser, 'react/event-loop', '>=1.2 <2.0')) {
+//echo "using React\n";
             return new Drivers\ReactDriver($exceptionHandler);
         } elseif (InstalledVersions::isInstalled('amphp/amp') && InstalledVersions::satisfies(new VersionParser, 'amphp/amp', '>=2.1 <3.0')) {
+//echo "using Amp\n";
             return new Drivers\AmpDriver($exceptionHandler);
         } elseif (false && class_exists(\Ev::class)) {
+//echo "using Ev\n";
             return new Drivers\EvDriver($exceptionHandler);
         } else {
+//echo "using StreamSelect\n";
             return new Drivers\StreamSelectDriver($exceptionHandler);
         }
     }

@@ -5,7 +5,7 @@ use Moebius\Loop;
 
 $tests = function() {
 
-    yield [false, Loop::delay(0, function() {
+    yield [true, Loop::delay(0, function() {
         assert(false, "Delay shouldn't run");
         echo "Delay shouldn't run\n";
     })];

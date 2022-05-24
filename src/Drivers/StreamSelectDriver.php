@@ -5,20 +5,25 @@ use Moebius\Loop;
 use Closure, SplMinHeap;
 use Moebius\Loop\{
     DriverInterface,
-    EventHandle
+    EventHandle,
+    Event
 };
 
 class StreamSelectDriver implements DriverInterface {
 
-    private array $eventCallbacks = [];
-    private array $eventStreamInfo = [];
-    private array $signals = [];
-    private array $eventTimers = [];
+    private float $time;
+
+    private array $events = [];
+    private array $readStreams = [];    // eventId => resource
+    private array $writeStreams = [];   // eventId => resource
+    private array $signals = [];        // signal => eventId[]
+    private array $timers = [];         // eventId => time
 
     private int $eventId = 0;
 
     private bool $scheduled = false;
     private bool $stopped = false;
+
     private array $tasks = [];
     private int $taskStart = 0;
     private int $taskEnd = 0;
@@ -28,16 +33,22 @@ class StreamSelectDriver implements DriverInterface {
     private int $microtaskStart = 0;
     private int $microtaskEnd = 0;
 
-    private $timers;
+    private $timerQueue;
 
     public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
-        $this->time = hrtime(true);
-        $this->timers = new \SplMinHeap();
+        $this->time = hrtime(true) / 1_000_000_000;
+        $this->timerQueue = new class extends \SplMinHeap {
+            protected function compare($a, $b): int {
+                if ($a->time > $b->time) return -1;
+                elseif ($a->time < $b->time) return 1;
+                return 0;
+            }
+        };
     }
 
     public function getTime(): float {
-        return $this->time / 1_000_000_000;
+        return $this->time;
     }
 
     public function run(Closure $shouldResumeFunction=null): void {
@@ -57,62 +68,68 @@ class StreamSelectDriver implements DriverInterface {
             return;
         }
 
-        $this->time = hrtime(true);
+        $this->time = hrtime(true) / 1_000_000_000;
 
-        while (!$this->timers->isEmpty() && $this->timers->top()[0] < $this->time) {
-            $eventId = $this->timers->extract()[1];
-            if (isset($this->eventCallbacks[$eventId])) {
-                $this->defer($this->eventCallbacks[$eventId]);
-                $this->deleteEventHandler($eventId);
+        while (!$this->timerQueue->isEmpty() && $this->timerQueue->top()->time < $this->getTime()) {
+            $event = $this->timerQueue->extract();
+
+            if (!isset($this->timers[$event->id])) {
+                // timer is deactivated or descheduled
+                continue;
             }
+            if ($event->time !== $this->timers[$event->id]) {
+                // timer is being rescheduled
+                $event->time = $this->timers[$event->id];
+                $this->timerQueue->insert($event);
+                continue;
+            }
+
+            if ($event->type === Event::TIMER) {
+                unset($this->timers[$event->id]);
+            } elseif ($event->type === Event::INTERVAL) {
+                $event->time = $event->time + $event->value;
+                $this->timers[$event->id] = $event->time;
+                $this->timerQueue->insert($event);
+            }
+
+            $this->defer($event->callback);
         }
 
         if ($this->taskStart < $this->taskEnd) {
             $uSeconds = 0;
         } else {
-            if (!$this->timers->isEmpty()) {
-                $uSeconds = min(250000, intval(($this->timers->top()[0] - $this->time) / 1000));
+            if (!$this->timerQueue->isEmpty()) {
+                $uSeconds = min(250000, intval(($this->timerQueue->top()->time - $this->getTime()) * 1000000));
             } else {
                 $uSeconds = 0;
             }
         }
 
-        $reads = [];
-        $readListeners = [];
-        $writes = [];
-        $writeListeners = [];
-        foreach ($this->eventStreamInfo as $eventId => $info) {
-            $fdId = $info['fdId'];
-            if (!\is_resource($info['fd'])) {
-                $this->defer($this->eventCallbacks[$eventId]);
-                $this->deleteEventHandler($eventId);
-            } elseif ($info['read']) {
-                if (!isset($reads[$fdId])) {
-                    $reads[$fdId] = $info['fd'];
-                }
-                $readListeners[$fdId][] = $eventId;
-            } elseif (!$info['read']) {
-                if (!isset($writes[$fdId])) {
-                    $writes[$fdId] = $info['fd'];
-                }
-                $writeListeners[$fdId][] = $eventId;
-            }
-        }
+        $reads = array_unique($this->readStreams, \SORT_NUMERIC);
+        $writes = array_unique($this->writeStreams, \SORT_NUMERIC);
 
         if (!empty($reads) || !empty($writes)) {
             $void = [];
             $count = \stream_select($reads, $writes, $void, 0, $uSeconds);
             if ($count !== false && $count > 0) {
                 foreach ($reads as $fd) {
-                    $fdId = \get_resource_id($fd);
-                    foreach ($readListeners[$fdId] as $eventId) {
-                        $this->defer($this->eventCallbacks[$eventId]);
+                    foreach ($this->readStreams as $eventId => $eventFd) {
+                        if ($eventFd === $fd && isset($this->events[$eventId])) {
+                            $callback = $this->events[$eventId]->callback;
+                            $this->defer(static function() use ($callback, $eventFd) {
+                                $callback($eventFd);
+                            });
+                        }
                     }
                 }
                 foreach ($writes as $fd) {
-                    $fdId = \get_resource_id($fd);
-                    foreach ($writeListeners[$fdId] as $eventId) {
-                        $this->defer($this->eventCallbacks[$eventId]);
+                    foreach ($this->writeStreams as $eventId => $eventFd) {
+                        if ($eventFd === $fd && isset($this->events[$eventId])) {
+                            $callback = $this->events[$eventId]->callback;
+                            $this->defer(static function() use ($callback, $eventFd) {
+                                $callback($eventFd);
+                            });
+                        }
                     }
                 }
             }
@@ -138,7 +155,9 @@ class StreamSelectDriver implements DriverInterface {
         }
 
         if (
-            !empty($this->eventCallbacks) ||
+            !$this->timerQueue->isEmpty() ||
+            !empty($this->readStreams) ||
+            !empty($this->writeStreams) ||
             $this->taskStart < $this->taskEnd
         ) {
             $this->schedule();
@@ -158,123 +177,116 @@ class StreamSelectDriver implements DriverInterface {
         $this->schedule();
     }
 
-    public function delay(float $delay, Closure $callback): EventHandle {
-        $eventId = $this->eventId++;
-
-        $time = intval(($this->getTime() + $delay) * 1_000_000_000);
-
-        $this->timers->insert([$time, $eventId]);
-
-        $this->eventTimers[$eventId] = true;
-
-        $this->eventCallbacks[$eventId] = function() use ($eventId, $callback) {
-            $this->deleteEventHandler($eventId);
-            $this->defer($callback);
-        };
-
-        $this->schedule();
-
-        return EventHandle::for($this, $eventId);
-    }
-
     public function readable($resource, Closure $callback): EventHandle {
-        $eventId = $this->eventId++;
-
-        $this->eventStreamInfo[$eventId] = [
-            'fd' => $resource,
-            'fdId' => \get_resource_id($resource),
-            'read' => true,
-        ];
-
-        $this->eventCallbacks[$eventId] = static function() use ($callback, $resource) {
-            $callback($resource);
-        };
-
-        $this->schedule();
-
-        return EventHandle::for($this, $eventId);
+        $event = new Event($this->eventId++, Event::READABLE, $resource, $callback);
+        $this->scheduleEvent($event);
+        return EventHandle::for($this, $event->id);
     }
 
     public function writable($resource, Closure $callback): EventHandle {
-        $eventId = $this->eventId++;
+        $event = new Event($this->eventId++, Event::WRITABLE, $resource, $callback);
+        $this->scheduleEvent($event);
+        return EventHandle::for($this, $event->id);
+    }
 
-        $this->eventStreamInfo[$eventId] = [
-            'fd' => $resource,
-            'fdId' => \get_resource_id($resource),
-            'read' => false,
-        ];
+    public function delay(float $delay, Closure $callback): EventHandle {
+        $event = new Event($this->eventId++, Event::TIMER, $delay, $callback, $this->getTime() + $delay);
+        $this->scheduleEvent($event);
+        return EventHandle::for($this, $event->id);
+    }
 
-        $this->eventCallbacks[$eventId] = static function() use ($callback, $resource) {
-            $callback($resource);
-        };
-
-        $this->schedule();
-
-        return EventHandle::for($this, $eventId);
+    public function interval(float $interval, Closure $callback): EventHandle {
+        $event = new Event($this->eventId++, Event::INTERVAL, $interval, $callback, $this->getTime() + $interval);
+        $this->scheduleEvent($event);
+        return EventHandle::for($this, $event->id);
     }
 
     public function signal(int $signalNumber, Closure $callback): EventHandle {
-        $eventId = $this->eventId++;
-
-        $this->eventCallbacks[$eventId] = $callback;
-
-        if (!isset($this->signals[$signalNumber])) {
-            \pcntl_signal($signalNumber, $this->onSignal(...));
-        }
-        $this->signals[$signalNumber][] = $eventId;
-        $this->eventSignals[$eventId] = $signalNumber;
-
-        return EventHandle::for($this, $eventId);
+        $event = new Event($this->eventId++, Event::SIGNAL, $signalNumber, $callback);
+        $this->scheduleEvent($event);
+        return EventHandle::for($this, $event->id);
     }
 
-    private function deleteEventHandler(int $id): void {
-        if (isset($this->eventSignals[$id])) {
-            $signalNumber = $this->eventSignals[$id];
-            $signals = [];
-            foreach ($this->signals[$signalNumber] as $eventId) {
-                if ($eventId !== $id) {
-                    $signals[] = $eventId;
+    private function scheduleEvent(Event $event): void {
+        $this->events[$event->id] = $event;
+        switch ($event->type) {
+            case Event::READABLE:
+                $this->readStreams[$event->id] = $event->value;
+                break;
+            case Event::WRITABLE:
+                $this->writeStreams[$event->id] = $event->value;
+                break;
+            case Event::SIGNAL:
+                if (empty($this->signals[$event->value])) {
+                    \pcntl_signal($event->value, $this->onSignal(...));
                 }
-            }
-            if (empty($signals)) {
-                \pcntl_signal($signalNumber, \SIG_DFL);
-                unset($this->signals[$signalNumber]);
-            } else {
-                $this->signals[$signalNumber] = $signals;
-            }
-            unset($this->eventSignals[$id]);
+                $this->signals[$event->value][] = $event->id;
+                break;
+            case Event::TIMER:
+            case Event::INTERVAL:
+                $this->timerQueue->insert($event);
+                $this->timers[$event->id] = $event->time;
+                break;
         }
-        unset($this->eventStreamInfo[$id], $this->eventCallbacks[$id], $this->eventTimers[$id]);
+        $this->schedule();
+    }
+
+    private function unscheduleEvent(Event $event): void {
+        if (!isset($this->events[$event->id])) {
+            return;
+        }
+        unset($this->events[$event->id]);
+        switch ($event->type) {
+            case Event::READABLE:
+                unset($this->readStreams[$event->id]);
+                break;
+            case Event::WRITABLE:
+                unset($this->writeStreams[$event->id]);
+                break;
+            case Event::SIGNAL:
+                foreach ($this->signals[$event->value] as $k => $eventId) {
+                    if ($eventId === $event->id) {
+                        unset($this->signals[$event->value][$k]);
+                        break;
+                    }
+                }
+                if (empty($this->signals[$event->value])) {
+                    \pcntl_signal($event->value, \SIG_DFL);
+                }
+                break;
+            case Event::TIMER:
+            case Event::INTERVAL:
+                unset($this->timers[$event->id]);
+                break;
+        }
     }
 
     public function cancel(int $eventId): void {
-        $this->deleteEventHandler($eventId);
+        if (!isset($this->events[$eventId])) {
+            return;
+        }
+        $event = $this->events[$eventId];
+        $this->unscheduleEvent($event);
     }
 
-    public function suspend(int $eventId): ? Closure {
-        if (!isset($this->eventCallbacks[$eventId])) {
+    public function suspend(int $eventId): ?Closure {
+        if (!isset($this->events[$eventId])) {
             return null;
         }
-        if (isset($this->eventTimers[$eventId])) {
-            return null;
-        }
-
-        $callback = $this->eventCallbacks[$eventId];
-        $streamInfo = $this->eventStreamInfo[$eventId] ?? null;
-        $signal = $this->eventSignals[$eventId] ?? null;
-        $this->deleteEventHandler($eventId);
-        return function() use ($eventId, $callback, $streamInfo, $signal) {
-            $this->eventCallbacks[$eventId] = $callback;
-            if ($streamInfo !== null) {
-                $this->eventStreamInfo[$eventId] = $streamInfo;
+        $event = $this->events[$eventId];
+        $this->unscheduleEvent($event);
+        return function() use ($event) {
+            switch ($event->type) {
+                case Event::TIMER:
+                    $event->time = hrtime(true) / 1_000_000_000 + $event->value;
+                    break;
+                case Event::INTERVAL:
+                    while ($event->time < $this->getTime()) {
+                        $event->time += $event->value;
+                    }
+                    break;
             }
-            if ($signal !== null) {
-                if (!isset($this->signals[$signal])) {
-                    \pcntl_signal($signal, $this->onSignal(...));
-                }
-                $this->signals[$signal][] = $eventId;
-            }
-            $this->schedule();
+            $this->scheduleEvent($event);
         };
     }
 

@@ -2,22 +2,24 @@
 require(__DIR__.'/../vendor/autoload.php');
 
 use Moebius\Loop;
-use Moebius\Loop\Readable;
+use Moebius\Loop\Interval;
 
-$fp = fopen(__FILE__, 'rn');
+$start = microtime(true);
+$timer = new Interval(0.1);
 
-$readable = new Readable($fp);
-
-$readable->then(function($fp) {
-    echo "A";
-}, function($e) {
-    assert(!$e, "Rejected");
-})->then(function() {
-    echo "C\n";
+$timer->then($func = function() use ($timer, &$func) {
+    echo "!";
+    $timer->then($func);
 });
 
-$readable->then(function() {
-    echo "B";
+Loop::delay(0.15, function() use ($timer) {
+    $timer->suspend();
+});
+Loop::delay(0.2, function() use ($timer) {
+    $timer->resume();
+});
+Loop::delay(0.3, function() use ($timer) {
+    $timer->cancel();
 });
 
 //die();

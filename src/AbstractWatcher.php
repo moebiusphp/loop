@@ -20,6 +20,7 @@ abstract class AbstractWatcher implements PromiseInterface {
      */
     protected array $onRejected = [];
 
+    protected bool $cancelled = false;
     protected EventHandle $eh;
 
     public function __construct(EventHandle $eh) {
@@ -27,8 +28,26 @@ abstract class AbstractWatcher implements PromiseInterface {
         $eh->suspend();
     }
 
+    public final function cancel() {
+        if (!$this->eh->isCancelled()) {
+            $this->eh->cancel();
+        }
+    }
+
+    public final function suspend(): void {
+        if (!$this->eh->isSuspended() && !$this->eh->isCancelled()) {
+            $this->eh->suspend();
+        }
+    }
+
+    public final function resume(): void {
+        if (!$this->eh->isCancelled() && $this->eh->isSuspended()) {
+            $this->eh->resume();
+        }
+    }
+
     public final function __destruct() {
-        $this->eh->cancel();
+        $this->cancel();
     }
 
     public function isPending(): bool {
