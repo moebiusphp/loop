@@ -11,18 +11,9 @@ class Interval extends AbstractWatcher {
     public function __construct(float $interval) {
         $this->interval = $interval;
         $this->nextTime = Loop::getTime() + $interval;
-        parent::__construct(Loop::delay($interval, $this->eventHandler(...)));
+        $eh = Loop::interval($interval, function() {
+            $this->fulfill($this->interval);
+        });
+        parent::__construct($eh);
     }
-
-    private function eventHandler(): void {
-        $this->fulfill($this->nextTime);
-        $this->eh->cancel();
-        $now = Loop::getTime();
-        while ($this->nextTime < $now) {
-            $this->nextTime += $this->interval;
-        }
-        $delay = $this->nextTime - $now;
-        $this->eh = Loop::delay($delay, $this->eventHandler(...));
-    }
-
 }

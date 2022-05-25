@@ -89,6 +89,10 @@ final class Loop {
         return self::get()->delay($time, $callback);
     }
 
+    public static function interval(float $interval, Closure $callback): EventHandle {
+        return self::get()->interval($interval, $callback);
+    }
+
     /**
      * Enqueue the provided callback as a microtask whenever a stream resource
      * becomes readable. The callbacks stop when the resource is closed or when

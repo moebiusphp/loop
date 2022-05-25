@@ -33,6 +33,11 @@ interface DriverInterface {
     public function delay(float $time, Closure $callback): EventHandle;
 
     /**
+     * Schedule a callback to be executed in $time seconds.
+     */
+    public function interval(float $interval, Closure $callback): EventHandle;
+
+    /**
      * Enqueue the provided callback as a microtask whenever a stream resource
      * becomes readable. The callbacks stop when the resource is closed or when
      * the returned callback is invoked.

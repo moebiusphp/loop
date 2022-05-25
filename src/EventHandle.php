@@ -74,7 +74,7 @@ final class EventHandle {
         $this->cancel();
     }
 
-    public static function for(DriverInterface $driver, int $eventId): self {
+    public static function create(DriverInterface $driver, int $eventId): self {
         if (self::$poolCount > 0) {
             $instance = self::$pool[--self::$poolCount];
             $instance->__construct($driver, $eventId);

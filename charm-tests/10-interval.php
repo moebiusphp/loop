@@ -15,10 +15,10 @@ $timer->then($func = function() use ($timer, &$func) {
 Loop::delay(0.15, function() use ($timer) {
     $timer->suspend();
 });
-Loop::delay(0.2, function() use ($timer) {
+Loop::delay(0.22, function() use ($timer) {
     $timer->resume();
 });
-Loop::delay(0.3, function() use ($timer) {
+Loop::delay(0.33, function() use ($timer) {
     $timer->cancel();
 });
 

@@ -1,217 +1,121 @@
 <?php
 namespace Moebius\Loop\Drivers;
 
-use Moebius\Loop;
-use Closure, SplMinHeap, Ev, EvLoop, EvTimer, EvIo;
+use Closure;
 use Moebius\Loop\{
-    DriverInterface,
-    EventHandle
+    Event,
+    EventHandle,
+    DriverInterface
 };
 
-class EvDriver implements DriverInterface {
+class EvDriver extends AbstractDriver {
 
-    private array $eventHandlers = [];
-    private int $eventId = 0;
-
-    private bool $scheduled = false;
-    private bool $stopped = false;
-    private array $tasks = [];
-    private int $taskStart = 0;
-    private int $taskEnd = 0;
-
-    private array $microtasks = [];
-    private array $microtaskArg = [];
-    private int $microtaskStart = 0;
-    private int $microtaskEnd = 0;
-
-    private EvLoop $loop;
+    private \EvLoop $loop;
 
     public function __construct(Closure $exceptionHandler) {
-        $this->exceptionHandler = $exceptionHandler;
-        $this->loop = EvLoop::defaultLoop();
+        $this->loop = \EvLoop::defaultLoop();
+
+        parent::__construct(
+            $exceptionHandler,
+            function($callback) {
+                \register_shutdown_function($callback);
+            }
+        );
+    }
+
+    protected function tick(): void {
+        if ($this->stopped) {
+            return;
+        }
+        $this->loop->run(
+            $this->hasImmediateWork() ?
+                \Ev::RUN_NOWAIT :
+                \Ev::RUN_ONCE
+        );
+        $this->runDeferred();
     }
 
     public function getTime(): float {
         return $this->loop->now();
     }
 
-    public function run(Closure $shouldResumeFunction=null): void {
-        do {
-            $this->tick();
-        } while ($shouldResumeFunction ? $shouldResumeFunction() : false);
+    public function stop(): void {
+        $this->stopped = true;
     }
 
-    private function tick(): void {
-//        echo "tick time=".$this->getTime()." activity=".count($this->eventHandlers)." tasks={$this->taskStart} {$this->taskEnd} microtasks={$this->microtaskStart} {$this->microtaskEnd}\n";
-        if ($this->stopped) {
-            return;
-        }
-
-        $this->runMicrotasks();
-        if ($this->stopped) {
-            return;
-        }
-
-        if ($this->taskStart < $this->taskEnd) {
-            $this->loop->run(Ev::RUN_NOWAIT);
-        } else {
-            $this->loop->run(Ev::RUN_ONCE);
-        }
-
-        $this->runMicrotasks();
-        if ($this->stopped) {
-            return;
-        }
-
-        $taskEnd = $this->taskEnd;
-        while ($this->taskStart < $taskEnd) {
-            try {
-                ($this->tasks[$this->taskStart++])();
-            } catch (\Throwable $e) {
-                $this->stopped = true;
-                $this->handleException($e);
-                return;
-            }
-            $this->runMicrotasks();
-        }
-
-        if (
-            !empty($this->eventHandlers) ||
-            $this->taskStart < $this->taskEnd
-        ) {
-            $this->schedule();
-        }
-    }
-
-    public function defer(Closure $callback): void {
-        $this->tasks[$this->taskEnd++] = $callback;
-        if (!$this->scheduled) {
-            $this->schedule();
-        }
-    }
-
-    public function queueMicrotask(Closure $callback, $argument=null): void {
-        $this->microtasks[$this->microtaskEnd] = $callback;
-        $this->microtaskArg[$this->microtaskEnd++] = $argument;
-        $this->schedule();
-    }
-
-    public function delay(float $delay, Closure $callback): EventHandle {
-        $eventId = $this->eventId++;
-
-        $this->eventHandlers[$eventId] = $this->loop->timer($delay, 0.0, function() use ($eventId, $callback) {
-            // invoker
-            unset($this->eventHandlers[$eventId]);
-            $this->queueMicrotask($callback);
-            $this->runMicrotasks();
-        });
-
-        $this->schedule();
-
-        return EventHandle::for($this, $eventId);
-    }
-
-    public function readable($resource, Closure $callback): EventHandle {
-        $eventId = $this->eventId++;
-        $eh = EventHandle::for($this, $eventId);
-
-        $this->eventHandlers[$eventId] = $this->loop->io($resource, Ev::READ, function($a) use ($resource, $callback, $eh) {
-            if (!\is_resource($resource)) {
-                $eh->cancel();
-            }
-            // invoker
-            $this->queueMicrotask($callback, $resource);
-            $this->runMicrotasks();
-        });
-
-        $this->schedule();
-
-        return $eh;
-    }
-
-    public function writable($resource, Closure $callback): EventHandle {
-        $eh = EventHandle::for($this, $this->eventId++);
-
-        $this->eventHandlers[$eh->getId()] = $this->loop->io($resource, Ev::WRITE, function() use ($resource, $callback, $eh) {
-            if (!\is_resource($resource)) {
-                $eh->cancel();
-            }
-            // invoker
-            $this->queueMicrotask($callback, $resource);
-            $this->runMicrotasks();
-        });
-
-        $this->schedule();
-
-        return EventHandle::for($this, $eventId);
-    }
-
-    public function signal(int $signalNumber, Closure $callback): EventHandle {
-        $eventId = $this->eventId++;
-
-        $this->eventHandlers[$eventId] = $this->loop->signal($signalNumber, function() {
-            $this->queueMicrotask($callback, $signalNumber);
-            $this->runMicrotasks();
-        });
-
-        $this->schedule();
-
-        return EventHandle::for($this, $eventId);
-    }
-
-    public function cancel(int $eventId): void {
-        if (isset($this->eventHandlers[$eventId])) {
-            $this->eventHandlers[$eventId]->stop();
-            unset($this->eventHandlers[$eventId]);
+    protected function scheduleOn(Event $event): void {
+//echo "on ".$event->id." type=".$event->type."\n";
+        switch ($event->type) {
+            case Event::READABLE:
+                if (!$event->data) {
+                    $event->data = $this->loop->io($event->value, \Ev::READ, function() use ($event) {
+                        $this->defer($event->trigger(...));
+                    });
+                } else {
+                    $event->data->start();
+                }
+                break;
+            case Event::WRITABLE:
+                if (!$event->data) {
+                    $event->data = $this->loop->io($event->value, \Ev::READ, function() use ($event) {
+                        $this->defer($event(...));
+                    });
+                } else {
+                    $event->data->start();
+                }
+                break;
+            case Event::TIMER:
+                if (!$event->data) {
+                    $event->data = $this->loop->timer($event->value, 0, function() use ($event) {
+                        $this->suspend($event->id);
+                        $this->defer($event->trigger(...));
+                    });
+                } else {
+                    $event->data->set($event->value, 0);
+                    $event->data->again();
+                }
+                break;
+            case Event::INTERVAL:
+                if (!$event->data) {
+                    $event->data = $this->loop->timer($event->value, $event->value, function() use ($event) {
+                        $this->defer($event->trigger(...));
+                    });
+                } else {
+                    $event->data->start();
+                }
+                break;
+            case Event::SIGNAL:
+                if (!$event->data) {
+                    $event->data = $this->loop->signal($event->value, function() use ($event) {
+                        $this->defer($event->trigger(...));
+                    });
+                } else {
+                    $event->data->start();
+                }
+                break;
         }
     }
 
-    public function suspend(int $eventId): ?Closure {
-        if (!isset($this->eventHandlers[$eventId])) {
-            return null;
-        }
-        if ($this->eventHandlers[$eventId] instanceof EvTimer) {
-            return null;
-        }
-
-        $eventHandlers = &$eventHandlers;
-        $event = $this->eventHandlers[$eventId];
-        unset($this->eventHandlers[$eventId]);
-        $event->stop();
-        return function() use ($event, $eventId) {
-            $event->start();
-            $this->eventHandlers[$eventId] = $event;
-            $this->schedule();
-        };
-    }
-
-    private function handleException(\Throwable $e) {
-        ($this->exceptionHandler)($e);
-    }
-
-    private function runMicrotasks(): void {
-        while ($this->microtaskStart < $this->microtaskEnd) {
-            try {
-                ($this->microtasks[$this->microtaskStart])($this->microtaskArg[$this->microtaskStart]);
-            } catch (\Throwable $e) {
-                $this->stopped = true;
-                ++$this->microtaskStart;
-                $this->handleException($e);
-                return;
-            }
-            ++$this->microtaskStart;
+    protected function scheduleOff(Event $event): void {
+//echo "off ".$event->id." type=".$event->type."\n";
+        switch ($event->type) {
+            case Event::READABLE:
+                $event->data->stop();
+                break;
+            case Event::WRITABLE:
+                $event->data->stop();
+                break;
+            case Event::TIMER:
+                $event->data->stop();
+                break;
+            case Event::INTERVAL:
+                $event->data->stop();
+                break;
+            case Event::SIGNAL:
+                $event->data->stop();
+                break;
         }
     }
 
-    private function schedule(): void {
-        if ($this->scheduled) {
-            return;
-        }
-        $this->scheduled = true;
-        \register_shutdown_function(function() {
-            $this->scheduled = false;
-            $this->tick();
-        });
-    }
 
 }
