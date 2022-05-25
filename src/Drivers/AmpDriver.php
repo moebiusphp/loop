@@ -15,28 +15,36 @@ class AmpDriver extends AbstractDriver {
     public function __construct(Closure $exceptionHandler) {
         $this->loop = \Amp\Loop::get();
         parent::__construct(
-            $exceptionHandler,
-            \register_shutdown_function(...)
+            $exceptionHandler
         );
+        \register_shutdown_function($this->loop->run(...));
     }
 
     public function getTime(): float {
         return $this->loop->now() / 1000;
     }
 
-    public function tick(): void {
-        $this->loop->defer($this->loop->stop(...));
-
-        $t = hrtime(true);
-        $this->loop->run();
-        $this->runDeferred();
-
-        if (!$this->hasImmediateWork()) {
-            // AMP has no means to only run one tick without sleeping to OS, so we sleep for it some
-            $ns = hrtime(true) - $t;
-            $uWait = intval((10_000_000 - $ns) / 1000);
-            usleep($uWait);
+    public function run(Closure $shouldResumeFunction=null): void {
+        $this->stopped = false;
+        if ($shouldResumeFunction) {
+            $this->loop->defer($func = function() use ($shouldResumeFunction, &$func) {
+                $this->runDeferred();
+                if (!$shouldResumeFunction()) {
+                    return;
+                }
+                $this->loop->defer($func);
+            });
         }
+        $this->loop->run();
+    }
+
+    public function stop(): void {
+        $this->stopped = true;
+        $this->loop->stop();
+    }
+
+    public function defer(Closure $callback): void {
+        $this->loop->defer($this->wrap($callback));
     }
 
     public function scheduleOn(Event $event): void {

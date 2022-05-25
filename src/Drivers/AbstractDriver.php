@@ -15,7 +15,7 @@ abstract class AbstractDriver implements DriverInterface {
     protected bool $scheduled = false;
 
     private Closure $exceptionHandler;
-    private Closure $shutdownFunction;
+    private Closure $scheduleFunction;
     private static int $eventId = 0;
     private array $events = [];
 
@@ -36,20 +36,17 @@ abstract class AbstractDriver implements DriverInterface {
     abstract protected function scheduleOff(Event $event): void;
 
 
-    public function __construct(Closure $exceptionHandler, Closure $shutdownFunction) {
+    public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
-        $this->shutdownFunction = $shutdownFunction;
     }
 
     public function defer(Closure $callback): void {
         $this->deferred[$this->deferredHigh++] = $callback;
-        $this->schedule();
     }
 
     public final function queueMicrotask(Closure $callback, mixed $argument=null): void {
         $this->microtasks[$this->microtaskHigh] = $callback;
         $this->microtaskArgs[$this->microtaskHigh++] = $argument;
-        $this->schedule();
     }
 
     /**
@@ -63,7 +60,6 @@ abstract class AbstractDriver implements DriverInterface {
         $event = Event::create(self::$eventId++, Event::READABLE, $resource, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
-        $this->schedule();
         return EventHandle::create($this, $event->id);
     }
 
@@ -78,7 +74,6 @@ abstract class AbstractDriver implements DriverInterface {
         $event = Event::create(self::$eventId++, Event::WRITABLE, $resource, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
-        $this->schedule();
         return EventHandle::create($this, $event->id);
     }
 
@@ -96,7 +91,6 @@ abstract class AbstractDriver implements DriverInterface {
         $event = Event::create($eventId = self::$eventId++, Event::TIMER, $delay, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
-        $this->schedule();
         return EventHandle::create($this, $event->id);
     }
 
@@ -109,7 +103,6 @@ abstract class AbstractDriver implements DriverInterface {
         $event = Event::create(self::$eventId++, Event::INTERVAL, $interval, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
-        $this->schedule();
         return EventHandle::create($this, $event->id);
     }
 
@@ -122,7 +115,6 @@ abstract class AbstractDriver implements DriverInterface {
         $event = Event::create(self::$eventId++, Event::SIGNAL, $signalNumber, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
-        $this->schedule();
         return EventHandle::create($this, $event->id);
     }
 
@@ -165,17 +157,6 @@ abstract class AbstractDriver implements DriverInterface {
             }
             $this->runMicrotasks();
         };
-    }
-
-    protected final function schedule(): void {
-        if ($this->scheduled) {
-            return;
-        }
-        $this->scheduled = true;
-        ($this->shutdownFunction)(function() {
-            $this->scheduled = false;
-            $this->run();
-        });
     }
 
     protected function hasImmediateWork(): bool {

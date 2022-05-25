@@ -16,9 +16,9 @@ class EvDriver extends AbstractDriver {
         $this->loop = \EvLoop::defaultLoop();
 
         parent::__construct(
-            $exceptionHandler,
-            \register_shutdown_function(...)
+            $exceptionHandler
         );
+        \register_shutdown_function($this->run(...));
     }
 
     public function run(Closure $shouldResumeFunction=null): void {
