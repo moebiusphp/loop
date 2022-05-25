@@ -4,6 +4,7 @@ namespace Moebius\Loop;
 use Closure;
 use Moebius\Loop;
 use Moebius\Promise;
+use Moebius\Deferred;
 use Moebius\PromiseInterface;
 
 abstract class AbstractWatcher implements PromiseInterface {
@@ -72,7 +73,7 @@ abstract class AbstractWatcher implements PromiseInterface {
         if ($this->eh->isSuspended()) {
             $this->eh->resume();
         }
-        $promise = new Promise();
+        $promise = new Deferred();
         if ($onFulfill !== null) {
             $this->onFulfilled[] = static function(mixed $value) use ($onFulfill, $onReject, $promise) {
                 try {
