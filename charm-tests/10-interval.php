@@ -13,12 +13,15 @@ $timer->then($func = function() use ($timer, &$func) {
 });
 
 Loop::delay(0.15, function() use ($timer) {
+//echo "suspending timer\n";
     $timer->suspend();
 });
 Loop::delay(0.22, function() use ($timer) {
+//echo "resuming timer\n";
     $timer->resume();
 });
 Loop::delay(0.33, function() use ($timer) {
+//echo "cancelling timer\n";
     $timer->cancel();
 });
 

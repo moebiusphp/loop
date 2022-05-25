@@ -52,9 +52,14 @@ class StreamSelectDriver implements DriverInterface {
     }
 
     public function run(Closure $shouldResumeFunction=null): void {
+        $this->stopped = false;
         do {
             $this->tick();
-        } while ($shouldResumeFunction ? $shouldResumeFunction() : false);
+        } while (!$this->stopped && $shouldResumeFunction ? $shouldResumeFunction() : false);
+    }
+
+    public function stop(): void {
+        $this->stopped = true;
     }
 
     private function tick(): void {
@@ -178,33 +183,33 @@ class StreamSelectDriver implements DriverInterface {
     }
 
     public function readable($resource, Closure $callback): EventHandle {
-        $event = new Event($this->eventId++, Event::READABLE, $resource, $callback);
+        $event = Event::create($this->eventId++, Event::READABLE, $resource, $callback);
         $this->scheduleEvent($event);
-        return EventHandle::for($this, $event->id);
+        return EventHandle::create($this, $event->id);
     }
 
     public function writable($resource, Closure $callback): EventHandle {
-        $event = new Event($this->eventId++, Event::WRITABLE, $resource, $callback);
+        $event = Event::create($this->eventId++, Event::WRITABLE, $resource, $callback);
         $this->scheduleEvent($event);
-        return EventHandle::for($this, $event->id);
+        return EventHandle::create($this, $event->id);
     }
 
     public function delay(float $delay, Closure $callback): EventHandle {
-        $event = new Event($this->eventId++, Event::TIMER, $delay, $callback, $this->getTime() + $delay);
+        $event = Event::create($this->eventId++, Event::TIMER, $delay, $callback, $this->getTime() + $delay);
         $this->scheduleEvent($event);
-        return EventHandle::for($this, $event->id);
+        return EventHandle::create($this, $event->id);
     }
 
     public function interval(float $interval, Closure $callback): EventHandle {
-        $event = new Event($this->eventId++, Event::INTERVAL, $interval, $callback, $this->getTime() + $interval);
+        $event = Event::create($this->eventId++, Event::INTERVAL, $interval, $callback, $this->getTime() + $interval);
         $this->scheduleEvent($event);
-        return EventHandle::for($this, $event->id);
+        return EventHandle::create($this, $event->id);
     }
 
     public function signal(int $signalNumber, Closure $callback): EventHandle {
-        $event = new Event($this->eventId++, Event::SIGNAL, $signalNumber, $callback);
+        $event = Event::create($this->eventId++, Event::SIGNAL, $signalNumber, $callback);
         $this->scheduleEvent($event);
-        return EventHandle::for($this, $event->id);
+        return EventHandle::create($this, $event->id);
     }
 
     private function scheduleEvent(Event $event): void {

@@ -16,6 +16,11 @@ interface DriverInterface {
     public function run(Closure $shouldResumeFunction=null): void;
 
     /**
+     * Stop the event loop from running
+     */
+    public function stop(): void;
+
+    /**
      * Schedule a callback to be executed on the next iteration of the event
      * loop.
      */

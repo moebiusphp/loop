@@ -27,11 +27,14 @@ abstract class AbstractDriver implements DriverInterface {
 
     abstract public function getTime(): float;
 
-    abstract protected function tick(): void;
+    abstract public function run(Closure $shouldResumeFunction=null): void;
+
+    abstract public function stop(): void;
 
     abstract protected function scheduleOn(Event $event): void;
 
     abstract protected function scheduleOff(Event $event): void;
+
 
     public function __construct(Closure $exceptionHandler, Closure $shutdownFunction) {
         $this->exceptionHandler = $exceptionHandler;
@@ -43,31 +46,10 @@ abstract class AbstractDriver implements DriverInterface {
         $this->schedule();
     }
 
-    public function queueMicrotask(Closure $callback, mixed $argument=null): void {
+    public final function queueMicrotask(Closure $callback, mixed $argument=null): void {
         $this->microtasks[$this->microtaskHigh] = $callback;
         $this->microtaskArgs[$this->microtaskHigh++] = $argument;
         $this->schedule();
-    }
-
-    public final function run(Closure $shouldResumeFunction=null): void {
-        if ($this->stopped) {
-            return;
-        }
-        do {
-//echo "stopped=".json_encode($this->stopped)." dlow=".$this->deferredLow." dhigh=".$this->deferredHigh." mlow=".$this->microtaskLow." mhigh=".$this->microtaskHigh." events=".count($this->events)."\n";
-            $this->tick();
-            if ($this->stopped || $shouldResumeFunction && !$shouldResumeFunction()) {
-                break;
-            }
-        } while ($this->hasImmediateWork() || $this->hasAsyncWork());
-
-        if ($this->stopped && $shouldResumeFunction) {
-            throw new InterruptedException("Running of the event loop was interrupted");
-        }
-
-        if ($this->hasImmediateWork() || $this->hasAsyncWork()) {
-            $this->schedule();
-        }
     }
 
     /**
@@ -77,6 +59,7 @@ abstract class AbstractDriver implements DriverInterface {
      * The callback will continue ticking until the event is suspended or cancelled.
      */
     public final function readable($resource, Closure $callback): EventHandle {
+        $callback = $this->wrap($callback, $resource);
         $event = Event::create(self::$eventId++, Event::READABLE, $resource, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
@@ -91,6 +74,7 @@ abstract class AbstractDriver implements DriverInterface {
      * The callback will continue ticking until the event is suspended or cancelled.
      */
     public final function writable($resource, Closure $callback): EventHandle {
+        $callback = $this->wrap($callback, $resource);
         $event = Event::create(self::$eventId++, Event::WRITABLE, $resource, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
@@ -104,7 +88,12 @@ abstract class AbstractDriver implements DriverInterface {
      * The callback must be suspended by calling $this->suspend($event->id) immediately after ticking.
      */
     public final function delay(float $delay, Closure $callback): EventHandle {
-        $event = Event::create(self::$eventId++, Event::TIMER, $delay, $callback);
+        $eventId = null;
+        $callback = $this->wrap(function() use ($delay, $callback, &$eventId) {
+            unset($this->events[$eventId]);
+            $callback($delay);
+        });
+        $event = Event::create($eventId = self::$eventId++, Event::TIMER, $delay, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
         $this->schedule();
@@ -116,11 +105,8 @@ abstract class AbstractDriver implements DriverInterface {
      * every $interval seconds.
      */
     public final function interval(float $interval, Closure $callback): EventHandle {
-        $event = Event::create(self::$eventId++, Event::INTERVAL, $interval, function() use ($callback, &$event) {
-            $this->defer(static function() use ($callback, $event) {
-                $callback($event->value);
-            });
-        }, $this->getTime() + $interval);
+        $callback = $this->wrap($callback, $interval);
+        $event = Event::create(self::$eventId++, Event::INTERVAL, $interval, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
         $this->schedule();
@@ -132,6 +118,7 @@ abstract class AbstractDriver implements DriverInterface {
      * callback will run at the next tick following the signal being received.
      */
     public final function signal(int $signalNumber, Closure $callback): EventHandle {
+        $callback = $this->wrap($callback, $signalNumber);
         $event = Event::create(self::$eventId++, Event::SIGNAL, $signalNumber, $callback);
         $this->events[$event->id] = $event;
         $this->scheduleOn($event);
@@ -160,6 +147,25 @@ abstract class AbstractDriver implements DriverInterface {
         };
     }
 
+    public final function valid(int $eventId): bool {
+        return isset($this->events[$eventId]);
+    }
+
+    protected final function wrap(Closure $closure, mixed ...$args): Closure {
+        return function() use ($closure, $args) {
+            $this->runMicrotasks();
+            try {
+                if ($this->stopped) {
+                    return;
+                }
+                $closure(...$args);
+            } catch (\Throwable $e) {
+                $this->handleException($e);
+                $this->stop();
+            }
+            $this->runMicrotasks();
+        };
+    }
 
     protected final function schedule(): void {
         if ($this->scheduled) {
@@ -205,7 +211,7 @@ abstract class AbstractDriver implements DriverInterface {
         }
     }
 
-    protected function runMicrotasks(): void {
+    private function runMicrotasks(): void {
         try {
             while (!$this->stopped && $this->microtaskLow < $this->microtaskHigh) {
                 $callback = $this->microtasks[$this->microtaskLow];

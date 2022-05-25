@@ -17,22 +17,25 @@ class EvDriver extends AbstractDriver {
 
         parent::__construct(
             $exceptionHandler,
-            function($callback) {
-                \register_shutdown_function($callback);
-            }
+            \register_shutdown_function(...)
         );
     }
 
-    protected function tick(): void {
-        if ($this->stopped) {
-            return;
-        }
-        $this->loop->run(
-            $this->hasImmediateWork() ?
-                \Ev::RUN_NOWAIT :
-                \Ev::RUN_ONCE
-        );
-        $this->runDeferred();
+    public function run(Closure $shouldResumeFunction=null): void {
+        $this->stopped = false;
+        do {
+            $this->loop->run(
+                $shouldResumeFunction || $this->hasImmediateWork() ?
+                    \Ev::RUN_NOWAIT :
+                    \Ev::RUN_ONCE
+            );
+
+            $this->runDeferred();
+
+            if ($shouldResumeFunction && !$shouldResumeFunction()) {
+                return;
+            }
+        } while (!$this->stopped && ($this->hasImmediateWork() || $this->hasAsyncWork()));
     }
 
     public function getTime(): float {
