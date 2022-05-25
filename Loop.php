@@ -8,7 +8,8 @@ use Moebius\Loop\{
     DriverFactory,
     EventHandle,
     TimeoutException,
-    RejectedException
+    RejectedException,
+    Factory
 };
 
 final class Loop {
@@ -125,14 +126,9 @@ final class Loop {
      */
     private static function get(): Loop\DriverInterface {
         if (self::$driver === null) {
-            $factory = DriverFactory::getFactory();
-            self::$driver = $factory->getDriver();
+            self::$driver = Factory::getDriver();
         }
         return self::$driver;
-    }
-
-    public static function setDriver(Loop\DriverInterface $driver): void {
-        self::$driver = $driver;
     }
 
 }

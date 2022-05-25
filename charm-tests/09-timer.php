@@ -10,15 +10,15 @@ $timer = new Timer(0.1);
 $timer->then(function() use ($timer) {
     echo "A";
     global $start;
-    assert(microtime(true) - $start > 0.1, "Timer spent too little time");
+    assert(microtime(true) - $start > 0.1, "Timer spent too little time: 0.1 > ".(microtime(true)-$start));
     $timer->then(function() use ($timer) {
         echo "B";
         global $start;
-        assert(microtime(true) - $start > 0.2, "Timer spent too little time");
+        assert(microtime(true) - $start < 0.11, "Timer spent too much time: 0.11 < ".(microtime(true)-$start));
         $timer->then(function() {
             echo "C\n";
             global $start;
-            assert(microtime(true) - $start > 0.3, "Timer spent too little time");
+            assert(microtime(true) - $start < 0.11, "Timer spent too much time: 0.11 < ".(microtime(true)-$start));
         });
     });
 });

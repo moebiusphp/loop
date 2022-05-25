@@ -1,5 +1,5 @@
 Moebius\Loop
-=======
+============
 
 An event loop focused on interoperability between the most
 popular event loops for PHP:
@@ -185,42 +185,24 @@ the event loop is empty.
 EventHandle class
 -----------------
 
-Some methods return an EventHandle object. This object can be
-used to suspend and resume the event listener, or you can
-cancel it.
+When subscribing to events (IO, timer, interval or signal) you
+will receive an EventHandle class. This handle can be used to
+suspend or cancel the event listener.
 
-To cancel an event listener:
+Example:
 
+```php
+    $readable = Moebius\Loop::readable($fp, function($fp) {
+        // read stream
+    });
+
+    // Disable listening for events
+    $readable->suspend();
+
+    // Enable listening for events
+    $readable->resume();
+
+    // Cancel listening for events (can't be resumed)
+    $readable->cancel();
 ```
-$eventHandle->cancel();
-```
-
-To suspend an event listener (does not work for delay-events):
-
-```
-$eventHandle->suspend();
-```
-
-To resume a suspended event listener:
-
-```
-$eventHandle->resume();
-```
-
-
-Promise-based API
------------------
-
-You can listen for events using a Promise-based API. For example
-you can listen for signals using the `Moebius\Loop\Signal` class:
-
-```
-$signal = new Moebius\Loop\Signal(SIGTERM);
-$signal->then(function() {
-    echo "We received a SIGTERM signal\n";
-});
-```
-
-Promise classes exists for Readable, Writable, Signal, Delay and
-Interval.
 

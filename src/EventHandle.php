@@ -55,7 +55,7 @@ final class EventHandle {
         } else {
             $this->resumeFunction = $this->driver->suspend($this->id);
             if ($this->resumeFunction === null) {
-                throw new \LogicException("Unable to suspend this event handle");
+                throw new \LogicException("Unable to suspend event handle id ".$this->id);
             }
         }
     }

@@ -2,18 +2,14 @@
 namespace Moebius\Loop;
 
 use Moebius\Loop;
+use Moebius\Promise\ProtoPromise;
 
-class Timer extends AbstractWatcher {
-
-    private float $timeout;
+class Timer extends ProtoPromise {
 
     public function __construct(float $time) {
-        $this->timeout = Loop::getTime() + $time;
-        $this->eh = Loop::delay($time, $this->eventHandler(...));
-    }
-
-    private function eventHandler(): void {
-        $this->fulfill($this->timeout);
+        Loop::delay($time, function() use ($time) {
+            $this->fulfill($time);
+        });
     }
 
 }
