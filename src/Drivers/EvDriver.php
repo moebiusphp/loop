@@ -1,124 +1,78 @@
 <?php
 namespace Moebius\Loop\Drivers;
 
-use Closure;
-use Moebius\Loop\{
-    Event,
-    EventHandle,
-    DriverInterface
-};
+use Closure, EvLoop, Ev, WeakMap;
+use Moebius\Loop\Util\ClosureTool;
 
-class EvDriver extends AbstractDriver {
+class EvDriver extends NativeDriver {
 
-    private \EvLoop $loop;
+    private EvLoop $loop;
+    private int $managedEvents = 0;
+    private WeakMap $watchers;
 
-    public function __construct(Closure $exceptionHandler) {
-        $this->loop = \EvLoop::defaultLoop();
-
-        parent::__construct(
-            $exceptionHandler
-        );
-        \register_shutdown_function($this->run(...));
+    public function __construct() {
+        parent::__construct();
+        $this->watchers = new WeakMap();
+        $this->loop = EvLoop::defaultLoop();
     }
 
-    public function run(Closure $shouldResumeFunction=null): void {
+    public function run(): void {
         $this->stopped = false;
         do {
-            $this->loop->run(
-                $shouldResumeFunction || $this->hasImmediateWork() ?
-                    \Ev::RUN_NOWAIT :
-                    \Ev::RUN_ONCE
-            );
-
-            $this->runDeferred();
-
-            if ($shouldResumeFunction && !$shouldResumeFunction()) {
+            // echo "deferred=".count($this->deferred)." watchers=".$this->watchers->count()." timers=".json_encode(!$this->timers->isEmpty())."\n";
+            if (
+                empty($this->deferred) &&
+                $this->watchers->count() === 0 &&
+                $this->timers->isEmpty()
+            ) {
                 return;
             }
-        } while (!$this->stopped && ($this->hasImmediateWork() || $this->hasAsyncWork()));
+            // how much time can we spend polling IO streams or waiting for timers?
+            if (!empty($this->deferred)) {
+                $maxDelay = 0;
+            } elseif (!$this->timers->isEmpty()) {
+                $nextTick = max($this->timers->getNextTime(), $this->time + 0.25);
+                $maxDelay = $nextTick - $this->time;
+            } else {
+                $maxDelay = 0.1;
+            }
+            if ($maxDelay > 0) {
+                $this->loop->run(Ev::RUN_ONCE);
+            } else {
+                $this->loop->run(Ev::RUN_NOWAIT);
+            }
+            $this->time = hrtime(true) / 1_000_000_000;
+
+            $this->enqueueTimers();
+            $this->runDeferred();
+        } while (!$this->stopped);
     }
 
-    public function getTime(): float {
-        return $this->loop->now();
+    public function readable($resource, Closure $callback): Closure {
+        $watcher = $this->loop->io($resource, Ev::READ, $callback);
+        $this->watchers[$watcher] = true;
+        return static function() use (&$watcher) {
+            $watcher->stop();
+            $watcher = null;
+        };
     }
 
-    public function stop(): void {
-        $this->stopped = true;
+    public function writable($resource, Closure $callback): Closure {
+        $watcher = $this->loop->io($resource, Ev::WRITE, $callback)->stop(...);
+        $this->watchers[$watcher] = true;
+        return static function() use (&$watcher) {
+            $watcher->stop();
+            $watcher = null;
+        };
     }
 
-    protected function scheduleOn(Event $event): void {
-//echo "on ".$event->id." type=".$event->type."\n";
-        switch ($event->type) {
-            case Event::READABLE:
-                if (!$event->data) {
-                    $event->data = $this->loop->io($event->value, \Ev::READ, function() use ($event) {
-                        $this->defer($event->trigger(...));
-                    });
-                } else {
-                    $event->data->start();
-                }
-                break;
-            case Event::WRITABLE:
-                if (!$event->data) {
-                    $event->data = $this->loop->io($event->value, \Ev::READ, function() use ($event) {
-                        $this->defer($event(...));
-                    });
-                } else {
-                    $event->data->start();
-                }
-                break;
-            case Event::TIMER:
-                if (!$event->data) {
-                    $event->data = $this->loop->timer($event->value, 0, function() use ($event) {
-                        $this->suspend($event->id);
-                        $this->defer($event->trigger(...));
-                    });
-                } else {
-                    $event->data->set($event->value, 0);
-                    $event->data->again();
-                }
-                break;
-            case Event::INTERVAL:
-                if (!$event->data) {
-                    $event->data = $this->loop->timer($event->value, $event->value, function() use ($event) {
-                        $this->defer($event->trigger(...));
-                    });
-                } else {
-                    $event->data->start();
-                }
-                break;
-            case Event::SIGNAL:
-                if (!$event->data) {
-                    $event->data = $this->loop->signal($event->value, function() use ($event) {
-                        $this->defer($event->trigger(...));
-                    });
-                } else {
-                    $event->data->start();
-                }
-                break;
-        }
+    public function signal(int $sigNum, Closure $callback): Closure {
+        $watcher = $this->loop->signal($sigNum, $callback)->stop(...);
+        $this->watchers[$watcher] = $watcher->stop(...);
+        return static function() use (&$watcher) {
+            $watcher->stop();
+            $watcher = null;
+        };
     }
-
-    protected function scheduleOff(Event $event): void {
-//echo "off ".$event->id." type=".$event->type."\n";
-        switch ($event->type) {
-            case Event::READABLE:
-                $event->data->stop();
-                break;
-            case Event::WRITABLE:
-                $event->data->stop();
-                break;
-            case Event::TIMER:
-                $event->data->stop();
-                break;
-            case Event::INTERVAL:
-                $event->data->stop();
-                break;
-            case Event::SIGNAL:
-                $event->data->stop();
-                break;
-        }
-    }
-
 
 }

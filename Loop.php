@@ -4,17 +4,17 @@ namespace Moebius;
 use Closure;
 
 use Moebius\Loop\{
+    Factory,
+    EventLoop,
     DriverInterface,
     DriverFactory,
-    EventHandle,
     TimeoutException,
-    RejectedException,
-    Factory
+    RejectedException
 };
 
 final class Loop {
 
-    private static $driver = null;
+    private static ?EventLoop $loop = null;
 
     public static function getTime(): float {
         return self::get()->getTime();
@@ -54,6 +54,7 @@ final class Loop {
                 throw new RejectedException($result);
             }
         } else {
+var_dump($status);die();
             throw new TimeoutException("Await timed out after $timeout seconds");
         }
     }
@@ -86,11 +87,11 @@ final class Loop {
     /**
      * Schedule a callback to run after $time seconds.
      */
-    public static function delay(float $time, Closure $callback): EventHandle {
+    public static function delay(float $time, Closure $callback): Closure {
         return self::get()->delay($time, $callback);
     }
 
-    public static function interval(float $interval, Closure $callback): EventHandle {
+    public static function interval(float $interval, Closure $callback): Closure {
         return self::get()->interval($interval, $callback);
     }
 
@@ -99,7 +100,7 @@ final class Loop {
      * becomes readable. The callbacks stop when the resource is closed or when
      * the returned callback is invoked.
      */
-    public static function readable(mixed $resource, Closure $callback): EventHandle {
+    public static function readable(mixed $resource, Closure $callback): Closure {
         return self::get()->readable($resource, $callback);
     }
 
@@ -108,7 +109,7 @@ final class Loop {
      * becomes writable. The callbacks stop when the resource is closed or when
      * the returned callback is invoked.
      */
-    public static function writable(mixed $resource, Closure $callback): EventHandle {
+    public static function writable(mixed $resource, Closure $callback): Closure {
         return self::get()->writable($resource, $callback);
     }
 
@@ -117,18 +118,18 @@ final class Loop {
      * the process. The callbacks stop when the resource is closed or when the 
      * returned callback is invoked.
      */
-    public static function signal(int $signalNumber, Closure $callback): EventHandle {
+    public static function signal(int $signalNumber, Closure $callback): Closure {
         return self::get()->signal($signalNumber, $callback);
     }
 
     /**
-     * Return the best driver instance available.
+     * Return the event loop instance
      */
-    private static function get(): Loop\DriverInterface {
-        if (self::$driver === null) {
-            self::$driver = Factory::getDriver();
+    public static function get(): EventLoop {
+        if (self::$loop === null) {
+            self::$loop = new EventLoop(Factory::getExceptionHandler());
         }
-        return self::$driver;
+        return self::$loop;
     }
 
 }

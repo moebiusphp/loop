@@ -3,85 +3,58 @@ namespace Moebius\Loop\Drivers;
 
 use Closure;
 use Moebius\Loop\{
-    Event,
-    EventHandle,
     DriverInterface
 };
+use Amp\Loop;
 
-class AmpDriver extends AbstractDriver {
+class AmpDriver implements DriverInterface {
 
-    private \Amp\Loop\Driver $loop;
+    public function __construct() {
+        \register_shutdown_function(Loop::run(...));
+    }
 
-    public function __construct(Closure $exceptionHandler) {
-        $this->loop = \Amp\Loop::get();
-        parent::__construct(
-            $exceptionHandler
-        );
-        \register_shutdown_function($this->loop->run(...));
+    public function defer(Closure $callable): void {
+        Loop::defer($callable);
+    }
+
+    public function readable($resource, Closure $callback): Closure {
+        $id = Loop::onReadable($resource, $callback);
+        return static function() use ($id) {
+            Loop::cancel($id);
+        };
+    }
+
+    public function writable($resource, Closure $callback): Closure {
+        $id = Loop::onWritable($resource, $callback);
+        return static function() use ($id) {
+            Loop::cancel($id);
+        };
+    }
+
+    public function delay(float $time, Closure $callback): Closure {
+        $id = Loop::delay(max(0, intval($time * 1000)), $callback);
+        return static function() use ($id) {
+            Loop::cancel($id);
+        };
+    }
+
+    public function signal(int $signalNumber, Closure $callback): Closure {
+        $id = Loop::onSignal($signalNumber, $callback);
+        return static function() use ($id) {
+            Loop::cancel($id);
+        };
     }
 
     public function getTime(): float {
-        return $this->loop->now() / 1000;
+        return Loop::now() / 1000;
     }
 
-    public function run(Closure $shouldResumeFunction=null): void {
-        $this->stopped = false;
-        if ($shouldResumeFunction) {
-            $this->loop->defer($func = function() use ($shouldResumeFunction, &$func) {
-                $this->runDeferred();
-                if (!$shouldResumeFunction()) {
-                    return;
-                }
-                $this->loop->defer($func);
-            });
-        }
-        $this->loop->run();
+    public function run(): void {
+        Loop::run();
     }
 
     public function stop(): void {
-        $this->stopped = true;
-        $this->loop->stop();
-    }
-
-    public function defer(Closure $callback): void {
-        $this->loop->defer($this->wrap($callback));
-    }
-
-    public function scheduleOn(Event $event): void {
-        switch ($event->type) {
-            case Event::READABLE:
-                $event->data = $this->loop->onReadable($event->value, function() use ($event) {
-                    $this->defer($event->trigger(...));
-                });
-                break;
-            case Event::WRITABLE:
-                $event->data = $this->loop->onWritable($event->value, function() use ($event) {
-                    $this->defer($event->trigger(...));
-                });
-                break;
-            case Event::TIMER:
-                $event->data = $this->loop->delay(intval($event->value * 1000), function() use ($event) {
-                    $this->defer($event->trigger(...));
-                });
-                break;
-            case Event::INTERVAL:
-                $event->data = $this->loop->repeat(intval($event->value * 1000), function() use ($event) {
-                    $this->defer($event->trigger(...));
-                });
-                break;
-            case Event::SIGNAL:
-                $event->data = $this->loop->onSignal($event->value, function() use ($event) {
-                    $this->defer($event->trigger(...));
-                });
-                break;
-        }
-    }
-
-    public function scheduleOff(Event $event): void {
-        if ($event->data) {
-            $this->loop->cancel($event->data);
-            $event->data = null;
-        }
+        Loop::stop();
     }
 
 }

@@ -21,37 +21,66 @@ abstract class AbstractWatcher implements PromiseInterface {
      */
     protected array $onRejected = [];
 
-    protected bool $cancelled = false;
-    protected EventHandle $eh;
+    protected $value;
+    protected ?Closure $startFunction;
+    protected ?Closure $stopFunction = null;
+    protected ?Closure $timeoutFunction = null;
 
-    public function __construct(EventHandle $eh) {
-        $this->eh = $eh;
-        $eh->suspend();
+    protected bool $dead = false;
+
+    public function __construct(Closure $startFunction, $value, float $timeout=null) {
+        $this->startFunction = $startFunction;
+        $this->value = $value;
+        if ($timeout !== null) {
+            $this->timeoutFunction = Loop::delay($timeout, function() {
+                if ($this->dead) {
+                    return;
+                };
+                if ($this->stopFunction) {
+                    $this->watcherStop();
+                }
+                $this->startFunction = null;
+                $this->timeoutFunction = null;
+                $this->reject(new TimeoutException());
+                $this->dead = true;
+            });
+        }
+    }
+
+    public final function suspend() {
+        $this->watcherStop();
+    }
+
+    public final function resume() {
+        $this->watcherStart();
     }
 
     public final function cancel() {
-        if (!$this->eh->isCancelled()) {
-            $this->eh->cancel();
+        if ($this->dead) {
+            throw new \LogicException("Trying to cancel a dead watcher");
         }
-    }
-
-    public final function suspend(): void {
-        if (!$this->eh->isSuspended() && !$this->eh->isCancelled()) {
-            $this->eh->suspend();
+        if ($this->stopFunction) {
+            $this->watcherStop();
         }
-    }
-
-    public final function resume(): void {
-        if (!$this->eh->isCancelled() && $this->eh->isSuspended()) {
-            $this->eh->resume();
+        if ($this->timeoutFunction) {
+            ($this->timeoutFunction)();
+            $this->timeoutFunction = null;
         }
+        $this->value = null;
+        $this->startFunction = null;
+        $this->reject(new CancelledException());
     }
 
     public final function __destruct() {
-        $this->cancel();
+        if (!$this->dead) {
+            $this->cancel();
+        }
     }
 
     public function isPending(): bool {
+        if ($this->dead) {
+            return false;
+        }
         return true;
     }
 
@@ -60,6 +89,9 @@ abstract class AbstractWatcher implements PromiseInterface {
     }
 
     public function isRejected(): bool {
+        if ($this->dead) {
+            return true;
+        }
         return false;
     }
 
@@ -67,11 +99,14 @@ abstract class AbstractWatcher implements PromiseInterface {
      * Attach listeners to this event promise.
      */
     public final function then(callable $onFulfill = null, callable $onReject = null, callable $void = null): PromiseInterface {
+        if ($this->dead) {
+            throw new \LogicException("Trying to watch a dead watcher");
+        }
         if ($onFulfill === null && $onReject === null) {
             return $this;
         }
-        if ($this->eh->isSuspended()) {
-            $this->eh->resume();
+        if (!$this->stopFunction) {
+            $this->watcherStart();
         }
         $promise = new Deferred();
         if ($onFulfill !== null) {
@@ -98,22 +133,53 @@ abstract class AbstractWatcher implements PromiseInterface {
         return $promise;
     }
 
-    protected final function fulfill(mixed $value): void {
-        $this->eh->suspend();
+    protected final function fulfill(): void {
+        if ($this->dead) {
+            throw new \LogicExceptin("Rejecting a dead watcher");
+        }
         foreach ($this->onFulfilled as $callback) {
-            Loop::queueMicrotask($callback, $value);
+            Loop::queueMicrotask($callback, $this->value);
         }
         $this->onFulfilled = [];
         $this->onRejected = [];
     }
 
     protected final function reject(mixed $reason): void {
-        $this->eh->suspend();
+        if ($this->dead) {
+            throw new \LogicExceptin("Rejecting a dead watcher");
+        }
+        $this->dead = true;
+        if ($this->stopFunction) {
+            $this->watcherStop();
+        }
+        if ($this->timeoutFunction) {
+            ($this->timeoutFunction)();
+            $this->timeoutFunction = null;
+        }
+        $this->startFunction = null;
         foreach ($this->onRejected as $callback) {
             Loop::queueMicrotask($callback, $reason);
         }
         $this->onFulfilled = [];
         $this->onRejected = [];
+    }
+
+    private function watcherStop(): void {
+        if (!$this->stopFunction) {
+            throw new \LogicException("Watcher not started");
+        }
+        ($this->stopFunction)();
+        $this->stopFunction = null;
+    }
+
+    private function watcherStart(): void {
+        if (!$this->startFunction) {
+            throw new \LogicException("Watcher has no start function");
+        }
+        $this->stopFunction = ($this->startFunction)($this->value, function() {
+            $this->watcherStop();
+            $this->fulfill();
+        });
     }
 
 }

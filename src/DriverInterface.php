@@ -6,64 +6,61 @@ use Closure;
 interface DriverInterface {
 
     /**
-     * Get the current event loop time
-     */
-    public function getTime(): float;
-
-    /**
-     * Run one iteration of ticks
-     */
-    public function run(Closure $shouldResumeFunction=null): void;
-
-    /**
-     * Stop the event loop from running
-     */
-    public function stop(): void;
-
-    /**
-     * Schedule a callback to be executed on the next iteration of the event
-     * loop.
+     * Schedule a callback to run on the next iteration
+     * of the event loop
      */
     public function defer(Closure $callback): void;
 
     /**
-     * Schedule a callback to be executed as soon as possible following the
-     * currently executing callback and any other queued microtasks.
+     * Run a callback whenever a resource is determined to be
+     * readable. Return a callback which will cancel the read
+     * stream watcher.
+     *
+     * At most one readable listener will be created per unique
+     * resource.
      */
-    public function queueMicrotask(Closure $callback): void;
+    public function readable($resource, Closure $callback): Closure;
 
     /**
-     * Schedule a callback to be executed in $time seconds.
+     * Run a callback whenever a resource is determined to be
+     * writable. Return a callback which will cancel the write
+     * stream watcher.
+     *
+     * At most one writable listener will be created per unique
+     * resource.
      */
-    public function delay(float $time, Closure $callback): EventHandle;
+    public function writable($resource, Closure $callback): Closure;
 
     /**
-     * Schedule a callback to be executed in $time seconds.
+     * Run a callback after $delay seconds. The returned callback can be
+     * used to cancel the timer.
      */
-    public function interval(float $interval, Closure $callback): EventHandle;
+    public function delay(float $delay, Closure $callback): Closure;
 
     /**
-     * Enqueue the provided callback as a microtask whenever a stream resource
-     * becomes readable. The callbacks stop when the resource is closed or when
-     * the returned callback is invoked.
+     * Run a callback whenever a process control signal is received by the
+     * application. The returned callback can be used to cancel the
+     * signal watcher.
+     *
+     * At most one watcher will be created per signal number.
      */
-    public function readable(mixed $resource, Closure $callback): EventHandle;
+    public function signal(int $signalNumber, Closure $callback): Closure;
 
     /**
-     * Enqueue the provided callback as a microtask whenever a stream resource
-     * becomes writable. The callbacks stop when the resource is closed or when
-     * the returned callback is invoked.
+     * Get the current event loop time as a decimal number of seconds.
      */
-    public function writable(mixed $resource, Closure $callback): EventHandle;
+    public function getTime(): float;
 
     /**
-     * Enqueue the provided callback as a microtask whenever a signal is received by
-     * the process. The callbacks stop when the resource is closed or when the 
-     * returned callback is invoked.
+     * Run the event loop until it is stopped by a call to
+     * {@see self::stop()}.
      */
-    public function signal(int $signalNumber, Closure $callback): EventHandle;
+    public function run(): void;
 
-    public function cancel(int $eventId): void;
-    public function suspend(int $eventId): ?Closure;
+    /**
+     * Stop the backend event loop (without cancelling any pending event
+     * listeners).
+     */
+    public function stop(): void;
 
 }

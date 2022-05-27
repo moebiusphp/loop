@@ -5,22 +5,22 @@ use Moebius\Loop;
 use Moebius\Loop\Interval;
 
 $start = microtime(true);
-$timer = new Interval(0.1);
+$timer = new Interval(0.2);
 
 $timer->then($func = function() use ($timer, &$func) {
     echo "!";
     $timer->then($func);
 });
 
-Loop::delay(0.15, function() use ($timer) {
+Loop::delay(0.3, function() use ($timer) {
 //echo "suspending timer\n";
     $timer->suspend();
 });
-Loop::delay(0.22, function() use ($timer) {
+Loop::delay(0.5, function() use ($timer) {
 //echo "resuming timer\n";
     $timer->resume();
 });
-Loop::delay(0.33, function() use ($timer) {
+Loop::delay(0.7, function() use ($timer) {
 //echo "cancelling timer\n";
     $timer->cancel();
 });

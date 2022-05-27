@@ -24,7 +24,7 @@ final class Factory {
             } elseif (class_exists(\Ev::class)) {
                 self::$driver = new Drivers\EvDriver($exceptionHandler);
             } else {
-                self::$driver = new Drivers\StreamSelectDriver($exceptionHandler);
+                self::$driver = new Drivers\NativeDriver();
             }
 
             if (getenv('DEBUG')) {
