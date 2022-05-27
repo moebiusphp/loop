@@ -14,11 +14,11 @@ $timer->then(function() use ($timer) {
     $timer->then(function() use ($timer) {
         echo "B";
         global $start;
-        assert(microtime(true) - $start < 0.11, "Timer spent too much time: 0.11 < ".(microtime(true)-$start));
+        assert(microtime(true) - $start > 0.19, "Timer spent too little time: 0.19 < ".(microtime(true)-$start));
         $timer->then(function() {
             echo "C\n";
             global $start;
-            assert(microtime(true) - $start < 0.11, "Timer spent too much time: 0.11 < ".(microtime(true)-$start));
+            assert(microtime(true) - $start > 0.29, "Timer spent too much time: 0.29 < ".(microtime(true)-$start));
         });
     });
 });

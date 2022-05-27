@@ -86,13 +86,7 @@ class EventLoop {
         $time = $this->getTime() + $delay;
         $timer = new Timer($time, $callback);
         $this->timers->enqueue($timer);
-        if ($this->nextTimer === null || $this->nextTimer > $time) {
-            if ($this->cancelTimer) {
-                ($this->cancelTimer)();
-            }
-            $this->nextTimer = $time;
-            $this->cancelTimer = $this->driver->delay($delay, $this->runTimers(...));
-        }
+        $this->scheduleTimers();
         return $timer->cancel(...);
     }
 
@@ -136,12 +130,29 @@ class EventLoop {
     }
 
     private function runTimers(): void {
+        $this->nextTimer = null;
+        $this->cancelTimer = null;
         $loopTime = $this->getTime();
-        while (null !== ($time = $this->timers->getNextTime()) && $time <= $loopTime) {
-            $this->defer($this->timers->dequeue()->callback);
+        while (!$this->timers->isEmpty() && $this->timers->getNextTime() < $loopTime) {
+            $timer = $this->timers->dequeue();
+            $this->defer($timer->callback);
         }
-        if ($time = $this->timers->getNextTime()) {
-            $delay = $time - $this->getTime();
+        if (!$this->timers->isEmpty()) {
+            $this->scheduleTimers();
+        }
+    }
+
+    private function scheduleTimers(): void {
+        $nextTimer = $this->timers->getNextTime();
+        if ($this->nextTimer === null || $this->nextTimer > $nextTimer) {
+            if ($this->cancelTimer) {
+                ($this->cancelTimer)();
+            }
+            if ($nextTimer === null) {
+                return;
+            }
+            $this->nextTimer = $nextTimer;
+            $delay = $this->nextTimer - $this->getTime();
             $this->cancelTimer = $this->driver->delay($delay, $this->runTimers(...));
         }
     }

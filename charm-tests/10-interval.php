@@ -24,7 +24,6 @@ Loop::delay(0.7, function() use ($timer) {
 //echo "cancelling timer\n";
     $timer->cancel();
 });
-
 //die();
 /*
 $fn = tempnam(sys_get_temp_dir(), 'coco');

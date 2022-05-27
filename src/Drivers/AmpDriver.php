@@ -9,15 +9,23 @@ use Amp\Loop;
 
 class AmpDriver implements DriverInterface {
 
+    private bool $scheduled = false;
+
     public function __construct() {
-        \register_shutdown_function(Loop::run(...));
+    }
+
+    private function scheduledRun() {
+        $this->scheduled = false;
+        Loop::run();
     }
 
     public function defer(Closure $callable): void {
+        $this->schedule();
         Loop::defer($callable);
     }
 
     public function readable($resource, Closure $callback): Closure {
+        $this->schedule();
         $id = Loop::onReadable($resource, $callback);
         return static function() use ($id) {
             Loop::cancel($id);
@@ -25,6 +33,7 @@ class AmpDriver implements DriverInterface {
     }
 
     public function writable($resource, Closure $callback): Closure {
+        $this->schedule();
         $id = Loop::onWritable($resource, $callback);
         return static function() use ($id) {
             Loop::cancel($id);
@@ -32,6 +41,7 @@ class AmpDriver implements DriverInterface {
     }
 
     public function delay(float $time, Closure $callback): Closure {
+        $this->schedule();
         $id = Loop::delay(max(0, intval($time * 1000)), $callback);
         return static function() use ($id) {
             Loop::cancel($id);
@@ -55,6 +65,13 @@ class AmpDriver implements DriverInterface {
 
     public function stop(): void {
         Loop::stop();
+    }
+
+    private function schedule(): void {
+        if (!$this->scheduled) {
+            \register_shutdown_function($this->scheduledRun(...));
+            $this->scheduled = true;
+        }
     }
 
 }
