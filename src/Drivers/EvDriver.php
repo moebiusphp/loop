@@ -58,7 +58,7 @@ class EvDriver extends NativeDriver {
     }
 
     public function writable($resource, Closure $callback): Closure {
-        $watcher = $this->loop->io($resource, Ev::WRITE, $callback)->stop(...);
+        $watcher = $this->loop->io($resource, Ev::WRITE, $callback);
         $this->watchers[$watcher] = true;
         return static function() use (&$watcher) {
             $watcher->stop();
@@ -67,8 +67,8 @@ class EvDriver extends NativeDriver {
     }
 
     public function signal(int $sigNum, Closure $callback): Closure {
-        $watcher = $this->loop->signal($sigNum, $callback)->stop(...);
-        $this->watchers[$watcher] = $watcher->stop(...);
+        $watcher = $this->loop->signal($sigNum, $callback);
+        $this->watchers[$watcher] = true;
         return static function() use (&$watcher) {
             $watcher->stop();
             $watcher = null;
