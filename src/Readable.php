@@ -1,12 +1,20 @@
 <?php
 namespace Moebius\Loop;
 
+use Closure;
 use Moebius\Loop;
 
 class Readable extends AbstractWatcher {
 
-    public function __construct(mixed $resource, float $timeout=null) {
-        parent::__construct(Loop::readable(...), $resource, $timeout);
+    private Closure $unlistener;
+
+    public function __construct($resource) {
+        if (!\is_resource($resource) || \get_resource_type($resource) !== 'stream') {
+            throw new \TypeError("Expecting a stream resource");
+        }
+        parent::__construct(Loop::readable($resource, function() use ($resource) {
+            $this->fulfill($resource);
+        }));
     }
 
 }

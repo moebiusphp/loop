@@ -78,8 +78,63 @@ As you can see, it is easy to use asynchronous code within any
 framework.
 
 
-TLRD
-----
+API reference
+-------------
+
+### `Moebius\Loop::getTime()`
+
+Get the current event loop time. This is a time indicating a number
+of seconds from an arbitrary point in time.
+
+### `Moebius\Loop::await(object $promise, float $timeout=null): mixed`
+
+Run the event loop until the promise resolves or the timeout is
+reached.
+
+### `Moebius\Loop::run(Closure $shouldResumeFunc=null): void`
+
+Run the event loop until `Moebius\Loop::stop()` is called. If a
+callback is provided, the loop will keep running until the callback
+returns a falsey value.
+
+### `Moebius\Loop::delay(float $time, Closure $callback): Closure`
+
+Run the callback after `$time` seconds have passed. The returned
+callback will abort the timer.
+
+### `Moebius\Loop::interval(float $interval, Closure $callback): Closure`
+
+Run the callback after `$interval` seconds have passed, and keep
+repeating the callback every `$interval` second. The returned callback
+will abort the interval.
+
+### `Moebius\Loop::readable(resource $resource, Closure $callback): Closure`
+
+Run the callback on every tick as long as reading from the stream
+resource will not block. This can also be used to accept new connections
+on a server socket. The returned callback will abort watching the stream.
+
+### `Moebius\Loop::writable(resource $resource, Closure $callback): Closure`
+
+Run the callback on every tick as long as writing to the stream resource
+will not block. The returned callback will abort watching the stream.
+
+### `Moebius\Loop::read(resource $resource, Closure $callback): Closure`
+
+Read a chunk of data from the stream resource and call the `$callback`
+with the chunk of data that was read. This function will stop as soon
+as EOF is called, unless the returned callback is called to abort the
+read operation first.
+
+### `Moebius\Loop::signal(int $signalNumber, Closure $callback): Closure`
+
+Run the callback whenever a signal is received by the process. The
+callback will continue to be called every time the signal is received,
+until the returned callback is invoked.
+
+
+Example
+-------
 
 A primitive example to illustrate how to write asynchronous
 code with `Moebius\Loop`.

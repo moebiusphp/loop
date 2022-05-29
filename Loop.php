@@ -54,7 +54,6 @@ final class Loop {
                 throw new RejectedException($result);
             }
         } else {
-var_dump($status);die();
             throw new TimeoutException("Await timed out after $timeout seconds");
         }
     }
@@ -101,7 +100,67 @@ var_dump($status);die();
      * the returned callback is invoked.
      */
     public static function readable(mixed $resource, Closure $callback): Closure {
+        if (!\is_resource($resource) || \get_resource_type($resource) !== 'stream') {
+            throw new \TypeError("Expecting a stream resource");
+        }
+        $meta = \stream_get_meta_data($resource);
+        if (
+            strpos($meta['mode'], 'r') === false &&
+            strpos($meta['mode'], '+') === false
+        ) {
+            throw new \TypeError("Expecting a readable stream resource");
+        }
         return self::get()->readable($resource, $callback);
+    }
+
+    /**
+     * Read data from the stream resource until EOF.
+     */
+    public static function read(mixed $resource, Closure $callback, ?Closure $onError=null): Closure {
+        $meta = \stream_get_meta_data($resource);
+        $cleanup = [];
+        if ($meta['blocked']) {
+            if (!\stream_set_blocking($resource, false)) {
+                throw new \RuntimeException("Unable to set stream to non-blocking mode");
+            }
+        }
+        \stream_set_read_buffer($resource, 0);
+
+        $cancelFunction = self::readable($resource, function() use ($resource, $callback, $onError, &$cancelFunction) {
+            $error = null;
+            if (\feof($resource)) {
+                if ($cancelFunction) {
+                    $cancelFunction();
+                    $cancelFunction = null;
+                }
+                return;
+            }
+            \set_error_handler(static function($errno, $errstr, $errfile, $errline) use (&$error) {
+                $error = new \ErrorException($errstr, 0, $errno, $errfile, $errline);
+            });
+            $chunk = \stream_get_contents($resource, 65536);
+            \restore_error_handler();
+            if (null === $error && $chunk === false) {
+                $error = new \RuntimeException("Failed to read stream");
+            }
+            if (null !== $error) {
+                if ($onError) {
+                    self::queueMicrotask($onError, $error);
+                } else {
+
+                }
+                fclose($resource);
+                $cancelFunction();
+                $cancelFunction = null;
+            }
+            self::queueMicrotask($callback, $chunk);
+        });
+
+        return static function() use (&$cancelFunction) {
+            if ($cancelFunction) {
+                $cancelFunction();
+            }
+        };
     }
 
     /**
@@ -110,6 +169,16 @@ var_dump($status);die();
      * the returned callback is invoked.
      */
     public static function writable(mixed $resource, Closure $callback): Closure {
+        if (!\is_resource($resource) || \get_resource_type($resource) !== 'stream') {
+            throw new \TypeError("Expecting a stream resource");
+        }
+        $meta = \stream_get_meta_data($resource);
+        if (
+            strpos($meta['mode'], '+') === false &&
+            strpos($meta['mode'], 'r') !== false
+        ) {
+            throw new \TypeError("Expecting a writable stream resource");
+        }
         return self::get()->writable($resource, $callback);
     }
 
@@ -133,3 +202,4 @@ var_dump($status);die();
     }
 
 }
+

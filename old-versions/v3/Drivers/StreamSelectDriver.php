@@ -64,7 +64,7 @@ class StreamSelectDriver extends AbstractDriver {
                 $this->writeListeners[$rId][$e->id] = $e->id;
                 break;
             case Event::TIMER:
-                $this->timerQueue->insert($e)
+                $this->timerQueue->insert($e);
                 break;
             case Event::INTERVAL:
                 if (isset($this->timers[$e->id]) && $this->timers[$e->id]) {

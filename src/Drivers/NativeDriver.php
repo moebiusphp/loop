@@ -50,7 +50,7 @@ class NativeDriver implements DriverInterface {
             if (!empty($this->deferred)) {
                 $maxDelay = 0;
             } elseif (!$this->timers->isEmpty()) {
-                $nextTick = max($this->timers->getNextTime(), $this->time + 0.25);
+                $nextTick = min($this->timers->getNextTime(), $this->time + 0.25);
                 $maxDelay = $nextTick - $this->time;
             } else {
                 $maxDelay = 0.1;
