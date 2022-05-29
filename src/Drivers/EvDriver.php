@@ -6,7 +6,7 @@ use Moebius\Loop\Util\ClosureTool;
 
 class EvDriver extends NativeDriver {
 
-    private EvLoop $loop;
+    private ?EvLoop $loop;
     private int $managedEvents = 0;
     private WeakMap $watchers;
 
