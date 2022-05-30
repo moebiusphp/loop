@@ -80,6 +80,10 @@ class EventLoop {
         $this->microtasks[$this->microtaskHigh] = $callback;
         $this->microtaskArgs[$this->microtaskHigh] = $argument;
         ++$this->microtaskHigh;
+        if (!$this->scheduled) {
+            $this->scheduled = true;
+            $this->driver->defer($this->runDeferred(...));
+        }
     }
 
     public function delay(float $delay, Closure $callback): Closure {
@@ -88,6 +92,27 @@ class EventLoop {
         $this->timers->enqueue($timer);
         $this->scheduleTimers();
         return $timer->cancel(...);
+    }
+
+    public function interval(float $interval, Closure $callback): Closure {
+        $stopper = null;
+        $nextTime = $this->getTime() + $interval;
+
+        $runner = function() use (&$nextTime, $interval, &$stopper, &$runner, $callback) {
+            $now = $this->getTime();
+            while ($nextTime < $now) {
+                $nextTime += $interval;
+            }
+            $delay = $nextTime - $now;
+            $stopper = $this->delay($delay, $runner);
+            $this->queueMicrotask($callback, $nextTime);
+        };
+
+        $stopper = $this->delay($interval, $runner);
+
+        return function() use (&$stopper) {
+            $stopper();
+        };
     }
 
     public function readable($resource, Closure $callback): Closure {

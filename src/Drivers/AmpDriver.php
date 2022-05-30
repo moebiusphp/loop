@@ -12,6 +12,9 @@ class AmpDriver implements DriverInterface {
     private bool $scheduled = false;
 
     public function __construct() {
+        if (\extension_loaded('pcntl')) {
+            pcntl_async_signals(true);
+        }
     }
 
     private function scheduledRun() {
@@ -49,7 +52,11 @@ class AmpDriver implements DriverInterface {
     }
 
     public function signal(int $signalNumber, Closure $callback): Closure {
-        $id = Loop::onSignal($signalNumber, $callback);
+        try {
+            $id = Loop::onSignal($signalNumber, $callback);
+        } catch (\Amp\Loop\UnsupportedFeatureException $e) {
+            throw new UnsupportedException("From amp: ".$e->getMessage(), $e->getCode(), $e);
+        }
         return static function() use ($id) {
             Loop::cancel($id);
         };

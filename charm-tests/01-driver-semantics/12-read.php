@@ -1,5 +1,5 @@
 <?php
-require(__DIR__.'/../vendor/autoload.php');
+require(__DIR__.'/../../vendor/autoload.php');
 
 use Moebius\Loop;
 
@@ -15,13 +15,14 @@ file_put_contents($t, $data);
 $fp = fopen($t, 'r');
 $readBytes = 0;
 Loop::read($fp, function($chunk) use ($fp, &$readBytes) {
+    if ($chunk === '') {
+        echo "EOF\n";
+        return;
+    }
     $readBytes += strlen($chunk);
     fwrite(STDERR, "Has read $readBytes bytes\n");
     if ($readBytes === 200000) {
         echo "All data received\n";
-    }
-    if(feof($fp)) {
-        echo "EOF\n";
     }
 });
 

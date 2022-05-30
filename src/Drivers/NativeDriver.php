@@ -35,7 +35,10 @@ class NativeDriver implements DriverInterface {
     public function run(): void {
         $this->stopped = false;
         do {
-//var_dump(empty($this->deferred), empty($this->readStreams), empty($this->writeStreams), "----");
+            if (\extension_loaded('pcntl')) {
+                \pcntl_signal_dispatch();
+            }
+
             if (
                 empty($this->deferred) &&
                 empty($this->readStreams) &&
@@ -147,6 +150,7 @@ class NativeDriver implements DriverInterface {
     }
 
     public function signal(int $signalNumber, Closure $callback): Closure {
+        $this->assertPcntlAvailable();
         \pcntl_signal($signalNumber, $callback);
         return function() use ($signalNumber) {
             \pcntl_signal($signalNumber, \SIG_DFL);
@@ -193,5 +197,12 @@ class NativeDriver implements DriverInterface {
                 $this->run();
             });
         }
+    }
+
+    private function assertPcntlAvailable(): void {
+        if (!\extension_loaded('pcntl')) {
+            throw new UnsupportedException("The pcntl extension is not installed");
+        }
+
     }
 }

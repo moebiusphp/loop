@@ -9,6 +9,14 @@ use React\EventLoop\Loop;
 
 class ReactDriver implements DriverInterface {
 
+    private Closure $exceptionHandler;
+    private bool $wasStopped = false;
+
+    public function __construct(Closure $exceptionHandler) {
+        $this->exceptionHandler = $exceptionHandler;
+        \register_shutdown_function($this->onShutdown(...));
+    }
+
     public function defer(Closure $callable): void {
         Loop::futureTick($callable);
     }
@@ -47,10 +55,20 @@ class ReactDriver implements DriverInterface {
 
     public function run(): void {
         Loop::run();
+        // when running the event loop, React will set its internal running state to true
+        $this->wasStopped = true;
     }
 
     public function stop(): void {
         Loop::stop();
+        // if we are forced to stop the event loop, React will set its internal running state to false
+        $this->wasStopped = true;
+    }
+
+    private function onShutdown(): void {
+        if ($this->wasStopped) {
+            \register_shutdown_function(\React\EventLoop\Loop::run(...));
+        }
     }
 
 }

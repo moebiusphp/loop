@@ -13,7 +13,8 @@ class EvDriver extends NativeDriver {
     public function __construct() {
         parent::__construct();
         $this->watchers = new WeakMap();
-        $this->loop = EvLoop::defaultLoop();
+//        $this->loop = EvLoop::defaultLoop(Ev::FLAG_AUTO | Ev::FLAG_SIGNALFD | Ev::FLAG_NOSIGMASK, null, 0.01, 2);
+        $this->loop = EvLoop::defaultLoop(Ev::FLAG_AUTO, null, 0.05, 0.25);
     }
 
     public function run(): void {
@@ -37,6 +38,7 @@ class EvDriver extends NativeDriver {
                 $maxDelay = 0.1;
             }
             if ($maxDelay > 0) {
+                $timer = $this->loop->timer($maxDelay, 0.0, static function() {});
                 $this->loop->run(Ev::RUN_ONCE);
             } else {
                 $this->loop->run(Ev::RUN_NOWAIT);

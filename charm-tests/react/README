@@ -1,0 +1,2 @@
+Tests here should run for all drivers but are designed particularly to detect
+differences in semantics found in react.

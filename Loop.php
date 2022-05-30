@@ -114,7 +114,8 @@ final class Loop {
     }
 
     /**
-     * Read data from the stream resource until EOF.
+     * Read data from the stream resource until EOF. When EOF is reached
+     * $callback will be invoked with an empty string ''.
      */
     public static function read(mixed $resource, Closure $callback, ?Closure $onError=null): Closure {
         $meta = \stream_get_meta_data($resource);
@@ -133,6 +134,7 @@ final class Loop {
                     $cancelFunction();
                     $cancelFunction = null;
                 }
+                self::queueMicrotask($callback, '');
                 return;
             }
             \set_error_handler(static function($errno, $errstr, $errfile, $errline) use (&$error) {
@@ -146,14 +148,14 @@ final class Loop {
             if (null !== $error) {
                 if ($onError) {
                     self::queueMicrotask($onError, $error);
-                } else {
-
                 }
                 fclose($resource);
                 $cancelFunction();
                 $cancelFunction = null;
             }
-            self::queueMicrotask($callback, $chunk);
+            if ($chunk !== '') {
+                self::queueMicrotask($callback, $chunk);
+            }
         });
 
         return static function() use (&$cancelFunction) {
