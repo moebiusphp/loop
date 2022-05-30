@@ -11,9 +11,9 @@ $readable->then(function($fp) {
 }, function($e) {
     assert(!$e, "Rejected");
 })->then(function() {
-    echo "C\n";
+    echo "B";
 });
 
 $readable->then(function() {
-    echo "B";
+    echo "C\n";
 });
