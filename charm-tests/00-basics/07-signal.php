@@ -1,5 +1,4 @@
 <?php
-require(__DIR__.'/../../vendor/autoload.php');
 use Moebius\Loop;
 
 $stopper = Loop::signal(SIGALRM, function($arg) use (&$stopper) {

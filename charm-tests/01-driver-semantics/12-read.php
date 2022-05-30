@@ -1,6 +1,4 @@
 <?php
-require(__DIR__.'/../../vendor/autoload.php');
-
 use Moebius\Loop;
 
 // create a file to test with

@@ -1,5 +1,4 @@
 <?php
-require(__DIR__.'/../../vendor/autoload.php');
 use Moebius\Loop;
 
 $fp = fopen(__FILE__, 'r');

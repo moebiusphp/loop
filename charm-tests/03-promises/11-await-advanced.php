@@ -1,6 +1,4 @@
 <?php
-require(__DIR__.'/../../vendor/autoload.php');
-
 use Moebius\Loop;
 
 (new Moebius\Loop\Timer(0.1))->then(function() {
