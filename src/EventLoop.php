@@ -10,7 +10,7 @@ use Moebius\Loop\Util\{
 
 class EventLoop {
 
-    private DriverInterface $driver;
+    private ?DriverInterface $driver;
 
     private bool $stopped = false;
 
@@ -44,6 +44,10 @@ class EventLoop {
         $this->readers = new Listeners($this->driver->readable(...), $this->defer(...), \get_resource_id(...));
         $this->writers = new Listeners($this->driver->writable(...), $this->defer(...), \get_resource_id(...));
         $this->signals = new Listeners($this->driver->signal(...), $this->defer(...), \intval(...));
+    }
+
+    public function __destruct() {
+        $this->driver->stop();
     }
 
     public function getTime(): float {
