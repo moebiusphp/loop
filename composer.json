@@ -12,7 +12,8 @@
         "psr-4": {
             "Moebius\\Loop\\": "src/"
         },
-        "classmap": ["Loop.php"]
+        "classmap": ["Loop.php"],
+        "files": ["functions.php"]
     },
     "authors": [
         {
