@@ -22,7 +22,7 @@
         }
     ],
     "require": {
-        "moebius/promise": ">=1.0.4 <2",
+        "moebius/promise": "dev-master",
         "composer/semver": "^3.3"
     },
     "scripts": {
