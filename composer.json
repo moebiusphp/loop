@@ -21,9 +21,8 @@
             "email": "frode@ennerd.com"
         }
     ],
-    "minimum-stability": "stable",
     "require": {
-        "moebius/promise": ">=1.0.4 <2.0",
+        "moebius/promise": ">=1.0.4 <2",
         "composer/semver": "^3.3"
     },
     "scripts": {
@@ -36,5 +35,7 @@
     },
     "require-dev": {
         "charm/testing": "^1.0"
-    }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
 }
