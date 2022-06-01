@@ -1,6 +1,7 @@
 <?php
 namespace Moebius\Loop;
 
+use Fiber;
 use Closure;
 use Moebius\Loop\Util\{
     Timer,
@@ -36,6 +37,7 @@ class EventLoop {
     private Listeners $writers;
 
     private Listeners $signals;
+    private EventLoop $self;
 
     public function __construct(Closure $exceptionHandler) {
         $this->driver = Factory::getDriver();
@@ -44,6 +46,31 @@ class EventLoop {
         $this->readers = new Listeners($this->driver->readable(...), $this->defer(...), \get_resource_id(...));
         $this->writers = new Listeners($this->driver->writable(...), $this->defer(...), \get_resource_id(...));
         $this->signals = new Listeners($this->driver->signal(...), $this->defer(...), \intval(...));
+        $this->keepAliveUntilEnd();
+    }
+
+    private function hasWork(): bool {
+        return
+            !empty($this->deferred) ||
+            !empty($this->microtasks) ||
+            !$this->timers->isEmpty() ||
+            !$this->readers->isEmpty() ||
+            !$this->writers->isEmpty() ||
+            !$this->signals->isEmpty();
+    }
+
+    /**
+     * This function is designed to postpone garbage collection for the event loop. It will store a reference
+     * to itself via a shutdown handler and renew that shutdown handler for as long as there are tasks scheduled.
+     */
+    private function keepAliveUntilEnd() {
+        static $count = 100;
+        if ($this->hasWork()) {
+            \register_shutdown_function($this->keepAliveUntilEnd(...));
+            $this->run();
+        } elseif (--$count >= 0) {
+            \register_shutdown_function($this->keepAliveUntilEnd(...));
+        }
     }
 
     public function __destruct() {
@@ -54,19 +81,23 @@ class EventLoop {
         return $this->driver->getTime();
     }
 
-    public function run(Closure $shouldResumeFunction=null) {
-        if ($shouldResumeFunction !== null) {
-            $this->defer($again = function() use ($shouldResumeFunction, &$again) {
-                if (!$shouldResumeFunction()) {
-                    $this->driver->stop();
-                } else {
+    private int $runDepth = 0;
+    /**
+     * Function runs the event loop until $this->stop
+     */
+    public function run(Closure $shouldContinueFunction=null) {
+        ++$this->runDepth;
+        if ($shouldContinueFunction) {
+            $this->defer($again = function() use (&$again, $shouldContinueFunction) {
+                if ($shouldContinueFunction()) {
                     $this->defer($again);
+                } else {
+                    $this->driver->stop();
                 }
             });
-            $this->driver->run();
-        } else {
-            $this->driver->run();
         }
+        $this->driver->run();
+        --$this->runDepth;
     }
 
     /**

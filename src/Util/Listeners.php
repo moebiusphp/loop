@@ -7,17 +7,39 @@ use Moebius\Loop\DriverInterface;
 class Listeners {
 
     private int $listenerId = 0;
+
+    /**
+     * Callback function in the driver to start subscribing for events
+     */
     private Closure $subscribeFunction;
+
+    /**
+     * Callback function for scheduling a callback after an event occurs
+     */
     private Closure $deferFunction;
-    private ?Closure $identifyFunction;
+
+    /**
+     * Callback function which translates a resource to a value which can
+     * be used as a key in arrays.
+     */
+    private Closure $identifyFunction;
+
     private array $listeners = [];
     private array $resources = [];
+
+    /**
+     * Callback function from the driver to cancel listening for events
+     */
     private array $unsubscribers = [];
 
     public function __construct(Closure $subscribeFunction, Closure $deferFunction, Closure $identifyFunction=null) {
         $this->subscribeFunction = $subscribeFunction;
         $this->deferFunction = $deferFunction;
-        $this->identifyFunction = $identifyFunction;
+        $this->identifyFunction = $identifyFunction ?? function($resource) { return $resource; };
+    }
+
+    public function isEmpty(): bool {
+        return empty($this->unsubscribers);
     }
 
     public function add($resource, Closure $callback): Closure {

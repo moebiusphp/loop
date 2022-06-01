@@ -41,7 +41,7 @@ final class Loop {
             }
         );
 
-        self::run(function() use (&$status, &$result) {
+        self::run(static function() use (&$status, &$result) {
             return $status === null;
         });
 
