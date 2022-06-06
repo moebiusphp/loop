@@ -23,7 +23,8 @@
     ],
     "require": {
         "moebius/promise": "dev-master",
-        "composer/semver": "^3.3"
+        "composer/semver": "^3.3",
+        "charm/fallback-logger": "^1.0"
     },
     "scripts": {
         "test": "vendor/bin/charm-testing",
