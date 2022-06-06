@@ -2,83 +2,99 @@
 namespace Moebius\Loop\Drivers;
 
 use Closure;
-use Moebius\Loop\{
-    DriverInterface
-};
-use Amp\Loop;
+use Moebius\Loop\DriverInterface;
+use Moebius\Loop\Handler;
+use Amp\Loop\Driver;
 
-class AmpDriver implements DriverInterface {
+class AmpDriver extends ReactDriver {
 
-    private bool $scheduled = false;
+    protected Driver $loop;
 
-    public function __construct() {
-        if (\extension_loaded('pcntl')) {
-            pcntl_async_signals(true);
-        }
-    }
-
-    private function scheduledRun() {
-        $this->scheduled = false;
-        Loop::run();
-    }
-
-    public function defer(Closure $callable): void {
-        $this->schedule();
-        Loop::defer($callable);
-    }
-
-    public function readable($resource, Closure $callback): Closure {
-        $this->schedule();
-        $id = Loop::onReadable($resource, $callback);
-        return static function() use ($id) {
-            Loop::cancel($id);
-        };
-    }
-
-    public function writable($resource, Closure $callback): Closure {
-        $this->schedule();
-        $id = Loop::onWritable($resource, $callback);
-        return static function() use ($id) {
-            Loop::cancel($id);
-        };
-    }
-
-    public function delay(float $time, Closure $callback): Closure {
-        $this->schedule();
-        $id = Loop::delay(max(0, intval($time * 1000)), $callback);
-        return static function() use ($id) {
-            Loop::cancel($id);
-        };
-    }
-
-    public function signal(int $signalNumber, Closure $callback): Closure {
-        try {
-            $id = Loop::onSignal($signalNumber, $callback);
-        } catch (\Amp\Loop\UnsupportedFeatureException $e) {
-            throw new UnsupportedException("From amp: ".$e->getMessage(), $e->getCode(), $e);
-        }
-        return static function() use ($id) {
-            Loop::cancel($id);
-        };
+    public function __construct(Closure $exceptionHandler) {
+        parent::__construct(function($e) use ($exceptionHandler) {
+            $this->stop();
+            $this->loop->defer(function() {
+                $this->stopped = false;
+            });
+        });
+        $this->loop = \Amp\Loop::get();
+        \register_shutdown_function($this->run(...));
     }
 
     public function getTime(): float {
-        return Loop::now() / 1000;
+        return $this->loop->now() / 1000;
     }
 
     public function run(): void {
-        Loop::run();
+        $this->loop->run();
     }
 
     public function stop(): void {
-        Loop::stop();
+        $this->stopped = true;
+        $this->loop->stop();
     }
 
-    private function schedule(): void {
-        if (!$this->scheduled) {
-            \register_shutdown_function($this->scheduledRun(...));
-            $this->scheduled = true;
+    public function defer(Closure $callback): void {
+        $this->loop->defer($this->wrap($callback));
+    }
+
+    public function poll(Closure $callback): void {
+        $this->loop->defer($callback);
+    }
+
+    public function delay(float $time, Closure $callback=null): Handler {
+        $timer = null;
+        [$handler, $fulfill] = Handler::create(function() use (&$timer) {
+            $this->loop->cancel($timer);
+        });
+        $timer = $this->loop->delay(intval($time * 1000), $this->wrap($fulfill, $this->getTime() + $time));
+        if ($callback) {
+            $handler->then($callback);
         }
+        return $handler;
     }
 
+    public function readable($resource, Closure $callback=null): Handler {
+        $id = \get_resource_id($resource);
+        if (isset($this->readStreams[$id])) {
+            throw new \LogicException("Already subscribed to this resource");
+        }
+        $eventId = null;
+        $cancelFunction = function() use (&$eventId, $id) {
+            unset($this->readStreams[$id]);
+            $this->loop->cancel($eventId);
+        };
+        [$handler, $fulfill] = Handler::create($cancelFunction);
+        $fulfill = $this->wrap($fulfill, $resource);
+        $eventId = $this->loop->onReadable($resource, function() use ($resource, $fulfill, $cancelFunction) {
+            $cancelFunction();
+            $fulfill();
+        });
+        if ($callback) {
+            $handler->then($callback);
+        }
+        return $handler;
+    }
+
+    public function writable($resource, Closure $callback=null): Handler {
+        $id = \get_resource_id($resource);
+        if (isset($this->writeStreams[$id])) {
+            throw new \LogicException("Already subscribed to this resource");
+        }
+        $eventId = null;
+        $cancelFunction = function() use (&$eventId, $id) {
+            unset($this->writeStreams[$id]);
+            $this->loop->cancel($eventId);
+        };
+        [$handler, $fulfill] = Handler::create($cancelFunction);
+        $fulfill = $this->wrap($fulfill, $resource);
+        $eventId = $this->loop->onWritable($resource, function() use ($resource, $fulfill, $cancelFunction) {
+            $cancelFunction();
+            $fulfill();
+        });
+        if ($callback) {
+            $handler->then($callback);
+        }
+        return $handler;
+    }
 }

@@ -2,111 +2,176 @@
 namespace Moebius\Loop\Drivers;
 
 use Closure;
-use Moebius\Loop\{
-    DriverInterface
-};
+use Moebius\Loop\DriverInterface;
+use Moebius\Loop\Handler;
 use React\EventLoop\Loop;
-use React\EventLoop\LoopInterface;
-
 
 class ReactDriver implements DriverInterface {
 
-    private LoopInterface $loop;
-    private Closure $exceptionHandler;
+    protected int $deferredHigh = 0;
+    protected int $deferredLow = 0;
+    protected int $pollOffset = -1;
 
-    /**
-     * If this is true when the react event loop is being activated
-     * it means that React was autotriggered by itself.
-     */
-    private bool $enableAutorunDetector = true;
-    private bool $reactWasAutorun = false;
+    protected array $microtasks = [], $microtaskArgs = [];
+    protected int $micLow = 0, $micHigh = 0;
+    protected array $readStreams = [];
+    protected array $writeStreams =[];
+    protected bool $stopped = false;
 
     public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
-        $this->loop = \React\EventLoop\Factory::create();
-
-        /**
-         * React will in general schedule itself to run on shutdown,
-         * but this does not happen if the loop was manually run.
-         * We'll schedule a task with react to detect if it was manually
-         * run so that we can run it on shutdown regardless. The
-         * onShutdown() function will check if react was autorun and if
-         * not, start the event loop for a final run.
-         */
-        $this->loop->futureTick($this->reactAutorunDetector(...));
-        \register_shutdown_function($this->onShutdown(...));
-    }
-
-    public function defer(Closure $callable): void {
-        Loop::futureTick($callable);
-    }
-
-    public function readable($resource, Closure $callback): Closure {
-        Loop::addReadStream($resource, $callback);
-        return static function() use ($resource) {
-            Loop::removeReadStream($resource);
-        };
-    }
-
-    public function writable($resource, Closure $callback): Closure {
-        Loop::addWriteStream($resource, $callback);
-        return static function() use ($resource) {
-            Loop::removeWriteStream($resource);
-        };
-    }
-
-    public function delay(float $time, Closure $callback): Closure {
-        $timer = Loop::addTimer($time, $callback);
-        return static function() use ($timer) {
-            Loop::cancelTimer($timer);
-        };
-    }
-
-    public function signal(int $signalNumber, Closure $callback): Closure {
-        Loop::addSignal($signalNumber, $callback);
-        return static function() use ($signalNumber, $callback) {
-            Loop::removeSignal($signalNumber, $callback);
-        };
     }
 
     public function getTime(): float {
-        return hrtime(true) / 1_000_000_000;
+        return \hrtime(true) / 1_000_000_000;
     }
 
     public function run(): void {
-        $this->enableAutorunDetector = false;
-        $this->loop->run();
-        $this->enableAutorunDetector = true;
+        $this->stopped = false;
+        Loop::run();
     }
 
     public function stop(): void {
-        $this->enableAutorunDetector = true;
+        $this->stopped = true;
         Loop::stop();
     }
 
-    /**
-     * This function is repeatedly scheduled with the React event loop to
-     * detect if React self-started on shutdown.
-     */
-    private function reactAutorunDetector(): void {
-        if ($this->enableAutorunDetector) {
-            // The react event loop must have be initiated elsewhere
-            $this->reactWasAutorun = true;
-        } elseif (!$this->reactWasAutorun) {
-            // Continue to wait for react to autorun
-            $this->loop->futureTick($this->reactAutorunDetector(...));
-        }
-    }
-
-    private function onShutdown(): void {
-        if ($this->reactWasAutorun) {
-            echo "shutdown detected and react has autorun\n";
+    public function await(object $promise): mixed {
+        $state = null;
+        $value = null;
+        $promise->then(static function($result) use (&$state, &$value) {
+            if ($state === null) {
+                $state = true;
+                $value = $result;
+            }
+        }, static function($result) use (&$state, &$value) {
+            if ($state === null) {
+                $state = false;
+                $value = $result;
+            }
+        });
+        $this->defer($again = function() use (&$state, &$poll, &$again) {
+            if ($state !== null) {
+                $this->stop();
+            } else {
+                $this->poll($again);
+            }
+        });
+        $this->run();
+        if ($state === true) {
+            return $value;
+        } elseif ($state === false) {
+            throw $value;
         } else {
-            echo "-- react did not run, so we must run it anyway\n";
-            $this->enableAutorunDetector = false;
-            $this->reactWasAutorun = true;
-            \register_shutdown_function($this->loop->run(...));
+            throw new \LogicException("Promise never resolved, but event loop is empty");
         }
     }
 
+    public function queueMicrotask(Closure $callback, mixed $argument=null): void {
+        $this->microtasks[$this->micHigh] = $callback;
+        $this->microtaskArgs[$this->micHigh++] = $argument;
+    }
+
+    public function defer(Closure $callable): void {
+        $this->deferredHigh++;
+        Loop::futureTick($this->wrap($callable, null, true));
+    }
+
+    public function poll(Closure $callable): void {
+        $this->defer($callable);
+    }
+
+    public function delay(float $time, Closure $callback=null): Handler {
+        $timer = null;
+        [$handler, $fulfill] = Handler::create(static function() use (&$timer) {
+            Loop::cancelTimer($timer);
+        });
+        $timer = Loop::addTimer($time, $this->wrap($fulfill, $this->getTime() + $time));
+        if ($callback) {
+            $handler->then($callback);
+        }
+        return $handler;
+    }
+
+    public function readable($resource, Closure $callback=null): Handler {
+        $id = \get_resource_id($resource);
+        if (isset($this->readStreams[$id])) {
+            throw new \LogicException("Already subscribed to this resource");
+        }
+        $this->readStreams[$id] = $resource;
+        $cancel = function() use ($id, $resource) {
+            Loop::removeReadStream($resource);
+            unset($this->readStreams[$id]);
+        };
+        [$handler, $fulfill] = Handler::create($cancel);
+        $fulfill = $this->wrap($fulfill, $resource);
+
+        Loop::addReadStream($resource, function() use ($cancel, $fulfill, $resource) {
+            $cancel();
+            $fulfill();
+        });
+
+        if ($callback) {
+            $handler->then($callback);
+        }
+
+        return $handler;
+    }
+
+    public function writable($resource, Closure $callback=null): Handler {
+        $id = \get_resource_id($resource);
+        if (isset($this->writeStreams[$id])) {
+            throw new \LogicException("Already subscribed to this resource");
+        }
+        $this->writeStreams[$id] = $resource;
+        $cancel = function() use ($id, $resource, &$cancelled) {
+            Loop::removeWriteStream($resource);
+            unset($this->writeStreams[$id]);
+        };
+        [$handler, $fulfill] = Handler::create($cancel);
+        $fulfill = $this->wrap($fulfill, $resource);
+
+        Loop::addWriteStream($resource, function() use ($cancel, $fulfill, $resource) {
+            $cancel();
+            $fulfill();
+        });
+
+        if ($callback) {
+            $handler->then($callback);
+        }
+
+        return $handler;
+    }
+
+    protected function wrap(Closure $callback, mixed $argument=null, bool $deferred=false): Closure {
+        return function() use ($callback, $argument, $deferred) {
+            if ($deferred) {
+                ++$this->deferredLow;
+            }
+
+            try {
+                if ($this->micLow < $this->micHigh) {
+                    $this->runMicrotasks();
+                }
+                if ($this->stopped) {
+                    return;
+                }
+                $callback($argument);
+                $this->runMicrotasks();
+            } catch (\Throwable $e) {
+                ($this->exceptionHandler)($e);
+                $this->stop();
+            }
+        };
+    }
+
+    protected function runMicrotasks(): void {
+        while (!$this->stopped && $this->micLow < $this->micHigh) {
+            $callback = $this->microtasks[$this->micLow];
+            $argument = $this->microtaskArgs[$this->micLow];
+            unset($this->microtasks[$this->micLow], $this->microtaskArgs[$this->micLow]);
+            ++$this->micLow;
+            $callback($argument);
+        }
+    }
 }

@@ -5,62 +5,66 @@ use Closure;
 
 interface DriverInterface {
 
-    /**
-     * Schedule a callback to run on the next iteration
-     * of the event loop
-     */
-    public function defer(Closure $callback): void;
+    public function __construct(Closure $exceptionHandler);
 
     /**
-     * Run a callback whenever a resource is determined to be
-     * readable. Return a callback which will cancel the read
-     * stream watcher.
-     *
-     * At most one readable listener will be created per unique
-     * resource.
-     */
-    public function readable($resource, Closure $callback): Closure;
-
-    /**
-     * Run a callback whenever a resource is determined to be
-     * writable. Return a callback which will cancel the write
-     * stream watcher.
-     *
-     * At most one writable listener will be created per unique
-     * resource.
-     */
-    public function writable($resource, Closure $callback): Closure;
-
-    /**
-     * Run a callback after $delay seconds. The returned callback can be
-     * used to cancel the timer.
-     */
-    public function delay(float $delay, Closure $callback): Closure;
-
-    /**
-     * Run a callback whenever a process control signal is received by the
-     * application. The returned callback can be used to cancel the
-     * signal watcher.
-     *
-     * At most one watcher will be created per signal number.
-     */
-    public function signal(int $signalNumber, Closure $callback): Closure;
-
-    /**
-     * Get the current event loop time as a decimal number of seconds.
+     * Get a time reference in seconds from an arbitrary point in time. This time
+     * reference is monotonic and may not be identical to wall-clock time.
      */
     public function getTime(): float;
 
     /**
-     * Run the event loop until it is stopped by a call to
-     * {@see self::stop()}.
+     * Run the event loop until there are no more pending tasks or event listeners,
+     * or until `DriverInterface::stop()` is called.
      */
     public function run(): void;
 
     /**
-     * Stop the backend event loop (without cancelling any pending event
-     * listeners).
+     * Stop the event loop if it is currently running.
      */
     public function stop(): void;
 
+    /**
+     * Run the event loop until the promise has been either fulfilled or rejected
+     */
+    public function await(object $promise): mixed;
+
+    /**
+     * Schedule a callback to run as soon as possible following all other scheduled
+     * callbacks.
+     */
+    public function defer(Closure $callback): void;
+
+    /**
+     * Schedule a callback to run as soon as possible following before any deferred
+     * callbacks or event callbacks, but after any previously scheduled microtask
+     * callbacks.
+     */
+    public function queueMicrotask(Closure $callback, mixed $argument=null): void;
+
+    /**
+     * Schedule a callback to run as soon as possible after running callbacks
+     * scheduled for this iteration of the event loop cycle. The callback will be
+     * run before any read or write stream polling and should primarily schedule
+     * event callbacks for the next cycle.
+     */
+    public function poll(Closure $callback): void;
+
+    /**
+     * Return an event handler promise which will be triggered as soon as `$time`
+     * number of seconds have elapsed.
+     */
+    public function delay(float $time): Handler;
+
+    /**
+     * Return an event handler promise which will be triggered as soon as reading
+     * from stream `$resource` will not block.
+     */
+    public function readable($resource): Handler;
+
+    /**
+     * Return an event handler promise which will be triggered as soon as writing
+     * to stream `$resource` will not block.
+     */
+    public function writable($resource): Handler;
 }

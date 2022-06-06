@@ -7,20 +7,19 @@ final class Timer {
 
     public float $time;
     public ?Closure $callback;
-    private $cancelledCounter;
 
-    public function __construct(float $time, Closure $callback) {
-        $this->time = $time;
-        $this->callback = $callback;
+    public static function create(float $time, Closure $callback) {
+        $timer = new self();
+        $timer->time = $time;
+        $timer->callback = $callback;
+        return $timer;
     }
 
-    public function setCounter(int &$cancelledCounter): void {
-        $this->cancelledCounter = &$cancelledCounter;
-    }
+    private function __construct() {}
 
-    public function cancel() {
-        if ($this->callback === null) {
-            throw new \LogicException("Timer was already cancelled");
+    public function cancel(): void {
+        if (!$this->callback) {
+            throw new \LogicException("Timer already cancelled");
         }
         $this->callback = null;
     }

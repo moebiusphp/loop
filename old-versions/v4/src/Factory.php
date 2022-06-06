@@ -24,7 +24,11 @@ final class Factory {
             } elseif (class_exists(\Ev::class)) {
                 self::$driver = new Drivers\EvDriver($exceptionHandler);
             } else {
-                self::$driver = new Drivers\NativeDriver($exceptionHandler);
+                self::$driver = new Drivers\NativeDriver();
+            }
+
+            if (getenv('DEBUG')) {
+                self::$driver = new Drivers\DebugDriver(self::$driver);
             }
         }
         return self::$driver;
@@ -53,21 +57,6 @@ final class Factory {
     }
 
     private static function defaultExceptionHandler(\Throwable $e) {
-        if ($previous = $e->getPrevious()) {
-            $message = "[{className} code={code}] {message} in {file}:{line}\n{trace}\nPrevious:\n{previousTrace}";
-            $context = [
-                "className" => get_class($e),
-                "code" => $e->getCode(),
-                "message" => $e->getMessage(),
-                "file" => $e->getFile(),
-                "line" => $e->getLine(),
-                "trace" => $e->getTraceAsString(),
-                "previousTrace" => $previous->getTraceAsString(),
-            ];
-            self::getLogger()->error($message, $context);
-            return;
-        }
-
         $message = "[{className} code={code}] {message} in {file}:{line}\n{trace}";
         $context = [
             "className" => get_class($e),
@@ -75,7 +64,7 @@ final class Factory {
             "message" => $e->getMessage(),
             "file" => $e->getFile(),
             "line" => $e->getLine(),
-            "trace" => $e->getTraceAsString(),
+            "trace" => $e->getTraceAsString()
         ];
         self::getLogger()->error($message, $context);
     }

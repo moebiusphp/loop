@@ -2,104 +2,139 @@
 namespace Moebius\Loop\Drivers;
 
 use Closure;
-use SplMinHeap;
-use LogicException;
-use Moebius\Loop\Util\{
-    TimerQueue,
-    Timer
-};
 use Moebius\Loop\DriverInterface;
+use Moebius\Loop\Handler;
+use Moebius\Loop\Util\TimerQueue;
+use Moebius\Loop\Util\Timer;
+
 
 class NativeDriver implements DriverInterface {
 
-    private bool $scheduled = false;
-    protected array $deferred = [];
-    protected float $time;
-    protected bool $stopped = true;
-    private array $readStreams = [];
-    private array $readListeners = [];
-    private array $writeStreams = [];
-    private array $writeListeners = [];
+    protected Closure $exceptionHandler;
     protected TimerQueue $timers;
 
-    public function __construct() {
+    protected array $deferred = [];
+    protected int $defLow = 0, $defHigh = 0;
+
+    protected array $microtasks = [], $microtaskArgs = [];
+    protected int $micLow = 0, $micHigh = 0;
+
+    protected array $pollers = [];
+    protected int $pollLow = 0, $pollHigh = 0;
+
+    protected array $readStreams = [];
+    protected array $readListeners = [];
+
+    protected array $writeStreams = [];
+    protected array $writeListeners = [];
+
+    protected bool $stopped = false;
+
+    public function __construct(Closure $exceptionHandler) {
+        $this->exceptionHandler = $exceptionHandler;
         $this->timers = new TimerQueue();
-        $this->time = hrtime(true) / 1_000_000_000;
         \register_shutdown_function($this->run(...));
     }
 
     public function getTime(): float {
-        return $this->time;
+        return hrtime(true) / 1_000_000_000;
+    }
+
+    public function await(object $promise): mixed {
+        $state = null;
+        $value = null;
+        $promise->then(static function($result) use (&$state, &$value) {
+            if ($state === null) {
+                $state = true;
+                $value = $result;
+            }
+        }, static function($reason) use (&$state, &$value) {
+            if ($state === null) {
+                $state = false;
+                $value = $reason;
+            }
+        });
+
+        $this->poll($checker = function() use (&$state, &$checker) {
+            if ($state === null) {
+                // keep polling
+                $this->poll($checker);
+            } else {
+                // stop the loop, we've got a result
+                $this->stop();
+            }
+        });
+
+        $this->run();
+
+        if ($state === true) {
+            return $value;
+        } elseif ($state === false) {
+            throw $value;
+        } else {
+            throw new \LogicException("Promise never resolved, but event loop is empty");
+        }
     }
 
     public function run(): void {
         $this->stopped = false;
+
         do {
-            if (\extension_loaded('pcntl')) {
-                \pcntl_signal_dispatch();
-            }
-
             if (
-                empty($this->deferred) &&
-                empty($this->readStreams) &&
-                empty($this->writeStreams) &&
-                $this->timers->isEmpty()
+                ($this->defLow < $this->defHigh) ||
+                ($this->micLow < $this->micHigh)
             ) {
-                // if the event loop has nothing to do, break out
-                return;
+                $availableTime = 0;
+            } else {
+                $nextTime = $this->timers->getNextTime() ?? $this->getTime() + 0.25;
+                $availableTime = max(0.25, $nextTime - $this->getTime());
             }
 
-            // how much time can we spend polling IO streams or waiting for timers?
-            if (!empty($this->deferred)) {
-                $maxDelay = 0;
-            } elseif (!$this->timers->isEmpty()) {
-                $nextTick = min($this->timers->getNextTime(), $this->time + 0.25);
-                $maxDelay = $nextTick - $this->time;
-            } else {
-                $maxDelay = 0.1;
-            }
-
-            if (empty($this->readStreams) && empty($this->writeStreams)) {
-                if ($maxDelay > 0) {
-                    usleep(intval($maxDelay * 1000000));
-                }
-            } else {
-                $reads = [];
-                $writes = [];
+            if (!empty($this->readStreams) || !empty($this->writeStreams)) {
+                $read = $this->readStreams;
+                $write = $this->writeStreams;
                 $void = [];
-                foreach ($this->readStreams as $id => $resource) {
-                    if (!\is_resource($resource)) {
-                        $this->deferred[] = $this->readListeners[$id];
+                $count = \stream_select($read, $write, $void, 0, 1_000_000 * $availableTime);
+                if ($count > 0) {
+                    foreach ($read as $resource) {
+                        $id = \get_resource_id($resource);
+                        $this->microtasks[$this->micHigh] = $this->readListeners[$id];
+                        $this->microtaskArgs[$this->micHigh++] = $resource;
                         unset($this->readStreams[$id], $this->readListeners[$id]);
-                    } else {
-                        $reads[] = $resource;
                     }
-                }
-                foreach ($this->writeStreams as $id => $resource) {
-                    if (!\is_resource($resource)) {
-                        $this->deferred[] = $this->writeListeners[$id];
+                    foreach ($write as $resource) {
+                        $id = \get_resource_id($resource);
+                        $this->microtasks[$this->micHigh] = $this->writeListeners[$id];
+                        $this->microtaskArgs[$this->micHigh++] = $resource;
                         unset($this->writeStreams[$id], $this->writeListeners[$id]);
-                    } else {
-                        $writes[] = $resource;
                     }
                 }
-                if (!empty($reads) || !empty($writes)) {
-                    $count = \stream_select($reads, $writes, $void, 0, intval($maxDelay * 1000000));
-                    foreach ($reads as $resource) {
-                        $this->deferred[] = $this->readListeners[\get_resource_id($resource)];
-                    }
-                    foreach ($writes as $resource) {
-                        $this->deferred[] = $this->writeListeners[\get_resource_id($resource)];
-                    }
-                }
+            } else {
+                usleep($availableTime * 1_000_000);
             }
 
-            $this->time = hrtime(true) / 1_000_000_000;
+            try {
+                $this->runMicrotasks();
+                $this->runTimers();
+                $this->runDeferred();
+                $this->runPollers();
+            } catch (\Throwable $e) {
+                ($this->exceptionHandler)($e);
+                $this->stop();
+            }
 
-            $this->enqueueTimers();
-            $this->runDeferred();
+            if ($this->stopped) {
+                break;
+            }
 
-        } while (!$this->stopped);
+        } while (
+            ($this->defLow < $this->defHigh) ||
+            ($this->pollLow < $this->pollHigh) ||
+            ($this->micLow < $this->micHigh) ||
+            !empty($this->readStreams) ||
+            !empty($this->writeStreams) ||
+            !$this->timers->isEmpty()
+        );
     }
 
     public function stop(): void {
@@ -107,102 +142,102 @@ class NativeDriver implements DriverInterface {
     }
 
     public function defer(Closure $callback): void {
-        $this->deferred[] = $callback;
-        if (!$this->scheduled) {
-            $this->schedule();
-        }
+        $this->deferred[$this->defHigh++] = $callback;
     }
 
-    public function readable($resource, Closure $callback): Closure {
-        $this->schedule();
-        $cancelled = false;
-        $resourceId = \get_resource_id($resource);
-        if (isset($this->readStreams[$resourceId])) {
-            throw new LogicException("Can't create multiple read listeners for the same resource");
-        }
-        $this->readStreams[$resourceId] = $resource;
-        $this->readListeners[$resourceId] = $callback;
-        return function() use ($resourceId, &$cancelled) {
-            if ($cancelled) {
-                throw new LogicException("Already cancelled");
-            }
-            $cancelled = true;
-            unset($this->readStreams[$resourceId], $this->readListeners[$resourceId]);
-        };
+    public function queueMicrotask(Closure $callback, mixed $argument=null): void {
+        $this->microtasks[$this->micHigh] = $callback;
+        $this->microtaskArgs[$this->micHigh++] = $argument;
     }
 
-    public function writable($resource, Closure $callback): Closure {
-        $this->schedule();
-        $cancelled = false;
-        $resourceId = \get_resource_id($resource);
-        if (isset($this->writeStreams[$resourceId])) {
-            throw new LogicException("Can't create multiple write listeners for the same resource");
-        }
-        $this->writeStreams[$resourceId] = $resource;
-        $this->writeListeners[$resourceId] = $callback;
-        return function() use ($resourceId, &$cancelled) {
-            if ($cancelled) {
-                throw new LogicException("Already cancelled");
-            }
-            $cancelled = true;
-            unset($this->writeStreams[$resourceId], $this->writeListeners[$resourceId]);
-        };
+    public function poll(Closure $callback): void {
+        $this->pollers[$this->pollHigh++] = $callback;
     }
 
-    public function signal(int $signalNumber, Closure $callback): Closure {
-        $this->assertPcntlAvailable();
-        \pcntl_signal($signalNumber, $callback);
-        return function() use ($signalNumber) {
-            \pcntl_signal($signalNumber, \SIG_DFL);
-        };
-    }
+    public function delay(float $time): Handler {
+        $cancelFunction = null;
 
-    public function delay(float $delay, Closure $callback): Closure {
-        $this->schedule();
-        $timer = new Timer($delay, $callback);
+        [$handler, $fulfill] = Handler::create(static function() use (&$cancelFunction) {
+            $cancelFunction();
+        });
+
+        $timer = Timer::create($this->getTime() + $time, $fulfill);
+        $cancelFunction = $timer->cancel(...);
+
         $this->timers->enqueue($timer);
-        return $timer->cancel(...);
+
+        return $handler;
     }
 
-    protected function enqueueTimers(): void {
-        // enqueue any timer callbacks
-        while (null !== ($time = $this->timers->getNextTime()) && $time < $this->time) {
+    public function readable($resource): Handler {
+        $id = \get_resource_id($resource);
+        if (isset($this->readStreams[$id])) {
+            throw new \LogicException("Already read-watching this stream resource");
+        }
+
+        [$handler, $fulfill] = Handler::create(function() use ($id) {
+            unset($this->readStreams[$id], $this->readListeners[$id]);
+        });
+
+        $this->readStreams[$id] = $resource;
+        $this->readListeners[$id] = $fulfill;
+
+        return $handler;
+    }
+
+    public function writable($resource): Handler {
+        $id = \get_resource_id($resource);
+        if (isset($this->writeStreams[$id])) {
+            throw new \LogicException("Already write-watching this stream resource");
+        }
+
+        [$handler, $fulfill] = Handler::create(function() use ($id) {
+            unset($this->writeStreams[$id], $this->writeListeners[$id]);
+        });
+
+        $this->writeStreams[$id] = $resource;
+        $this->writeListeners[$id] = $fulfill;
+
+        return $handler;
+    }
+
+    protected function runTimers(): void {
+        $time = $this->getTime();
+        while (!$this->timers->isEmpty() && $this->timers->getNextTime() < $time) {
             $timer = $this->timers->dequeue();
-            $this->deferred[] = $timer->callback;
+            ($timer->callback)($timer->time);
+            $this->runMicrotasks();
         }
     }
 
     protected function runDeferred(): void {
-        $deferred = $this->deferred;
-        $this->deferred = [];
-        foreach ($deferred as $callback) {
-            if ($this->stopped) {
-                $this->deferred[] = $callback;
-                continue;
-            }
-            try {
-                $callback();
-            } catch (\Throwable $e) {
-                ($this->exceptionHandler)($e);
-                $this->stopped = true;
-            }
+        $defHigh = $this->defHigh;
+        while ($this->defLow < $defHigh) {
+            $callback = $this->deferred[$this->defLow];
+            unset($this->deferred[$this->defLow++]);
+            $callback();
+            $this->runMicrotasks();
         }
     }
 
-    private function schedule(): void {
-        if (!$this->scheduled) {
-            $this->scheduled = true;
-            \register_shutdown_function(function() {
-                $this->scheduled = false;
-                $this->run();
-            });
+    protected function runPollers(): void {
+        $pollHigh = $this->pollHigh;
+        while ($this->pollLow < $pollHigh) {
+            $callback = $this->pollers[$this->pollLow];
+            unset($this->pollers[$this->pollLow++]);
+            $callback();
+            $this->runMicrotasks();
         }
     }
 
-    private function assertPcntlAvailable(): void {
-        if (!\extension_loaded('pcntl')) {
-            throw new UnsupportedException("The pcntl extension is not installed");
+    protected function runMicrotasks(): void {
+        while ($this->micLow < $this->micHigh) {
+            $callback = $this->microtasks[$this->micLow];
+            $argument = $this->microtaskArgs[$this->micLow];
+            unset($this->microtasks[$this->micLow], $this->microtaskArgs[$this->micLow]);
+            ++$this->micLow;
+            $callback($argument);
         }
-
     }
+
 }

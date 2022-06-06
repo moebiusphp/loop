@@ -1,80 +1,137 @@
 <?php
 namespace Moebius\Loop\Drivers;
 
-use Closure, EvLoop, Ev, WeakMap;
-use Moebius\Loop\Util\ClosureTool;
+use Closure;
+use Moebius\Loop\Handler;
+use Moebius\Loop\DriverInterface;
 
 class EvDriver extends NativeDriver {
 
-    private ?EvLoop $loop;
-    private int $managedEvents = 0;
-    private WeakMap $watchers;
+    private int $timerCount = 0;
 
-    public function __construct() {
-        parent::__construct();
-        $this->watchers = new WeakMap();
-//        $this->loop = EvLoop::defaultLoop(Ev::FLAG_AUTO | Ev::FLAG_SIGNALFD | Ev::FLAG_NOSIGMASK, null, 0.01, 2);
-        $this->loop = EvLoop::defaultLoop(Ev::FLAG_AUTO, null, 0.05, 0.25);
+    public function __construct(Closure $exceptionHandler) {
+        parent::__construct($exceptionHandler);
+        $this->loop = \EvLoop::defaultLoop();
     }
 
     public function run(): void {
         $this->stopped = false;
+
         do {
-            // echo "deferred=".count($this->deferred)." watchers=".$this->watchers->count()." timers=".json_encode(!$this->timers->isEmpty())."\n";
             if (
-                empty($this->deferred) &&
-                $this->watchers->count() === 0 &&
-                $this->timers->isEmpty()
+                ($this->defLow < $this->defHigh) ||
+                ($this->micLow < $this->micHigh)
             ) {
+                $this->loop->run(\Ev::RUN_NOWAIT);
+            } else {
+                $this->loop->run(\Ev::RUN_ONCE);
+            }
+
+            try {
+                $this->runMicrotasks();
+                $this->runDeferred();
+                $this->runPollers();
+            } catch (\Throwable $e) {
+                ($this->exceptionHandler)($e);
+                $this->stop();
+            }
+
+            if ($this->stopped) {
+                break;
+            }
+
+        } while (
+            ($this->defLow < $this->defHigh) ||
+            ($this->pollLow < $this->pollHigh) ||
+            ($this->micLow < $this->micHigh) ||
+            !empty($this->readStreams) ||
+            !empty($this->writeStreams) ||
+            $this->timerCount > 0
+        );
+    }
+
+    public function readable($resource, Closure $callback=null): Handler {
+        $id = \get_resource_id($resource);
+        $event = null;
+
+        [$handler, $fulfill] = Handler::create(static function() use (&$event, $id) {
+            unset($this->readStreams[$id]);
+            $event->stop();
+        });
+
+        $event = $this->loop->io($resource, \Ev::READ, function() use ($resource, $fulfill, &$event, $id) {
+            unset($this->readStreams[$id]);
+            $event->stop();
+            try {
+                $this->runMicrotasks();
+                $fulfill($resource);
+                $this->runMicrotasks();
+            } catch (\Throwable $e) {
+                ($this->exceptionHandler)($e);
+                $this->stop();
+            }
+        });
+
+        $this->readStreams[$id] = $resource;
+
+        return $handler;
+    }
+
+    public function writable($resource, Closure $callback=null): Handler {
+        $id = \get_resource_id($resource);
+        $event = null;
+
+        [$handler, $fulfill] = Handler::create(static function() use (&$event, $id) {
+            unset($this->writeStreams[$id]);
+            $event->stop();
+        });
+        $event = $this->loop->io($resource, \Ev::WRITE, function() use ($resource, $fulfill, &$event, $id) {
+            unset($this->writeStreams[$id]);
+            $event->stop();
+            try {
+                $this->runMicrotasks();
+                $fulfill($resource);
+                $this->runMicrotasks();
+            } catch (\Throwable $e) {
+                ($this->exceptionHandler)($e);
+                $this->stop();
+            }
+        });
+
+        $this->writeStreams[$id] = $resource;
+
+        return $handler;
+    }
+
+    public function delay(float $time, Closure $callback=null): Handler {
+        ++$this->timerCount;
+        $event = null;
+        $cancelled = false;
+
+        [$handler, $fulfill] = Handler::create(function() use (&$cancelled, &$event) {
+            if (!$cancelled) {
+                --$this->timerCount;
+            }
+            $event->stop();
+            $cancelled = true;
+        });
+        $event = $this->loop->timer($time, 0.0, function() use ($fulfill, &$cancelled, &$event) {
+            if ($cancelled) {
                 return;
             }
-            // how much time can we spend polling IO streams or waiting for timers?
-            if (!empty($this->deferred)) {
-                $maxDelay = 0;
-            } elseif (!$this->timers->isEmpty()) {
-                $nextTick = max($this->timers->getNextTime(), $this->time + 0.25);
-                $maxDelay = $nextTick - $this->time;
-            } else {
-                $maxDelay = 0.1;
+            $cancelled = true;
+            --$this->timerCount;
+            try {
+                $this->runMicrotasks();
+                $fulfill($this->getTime());
+                $this->runMicrotasks();
+            } catch (\Throwable $e) {
+                ($this->exceptionHandler)($e);
+                $this->stop();
             }
-            if ($maxDelay > 0) {
-                $timer = $this->loop->timer($maxDelay, 0.0, static function() {});
-                $this->loop->run(Ev::RUN_ONCE);
-            } else {
-                $this->loop->run(Ev::RUN_NOWAIT);
-            }
-            $this->time = hrtime(true) / 1_000_000_000;
+        });
 
-            $this->enqueueTimers();
-            $this->runDeferred();
-        } while (!$this->stopped);
-    }
-
-    public function readable($resource, Closure $callback): Closure {
-        $watcher = $this->loop->io($resource, Ev::READ, $callback);
-        $this->watchers[$watcher] = true;
-        return static function() use (&$watcher) {
-            $watcher->stop();
-            $watcher = null;
-        };
-    }
-
-    public function writable($resource, Closure $callback): Closure {
-        $watcher = $this->loop->io($resource, Ev::WRITE, $callback);
-        $this->watchers[$watcher] = true;
-        return static function() use (&$watcher) {
-            $watcher->stop();
-            $watcher = null;
-        };
-    }
-
-    public function signal(int $sigNum, Closure $callback): Closure {
-        $watcher = $this->loop->signal($sigNum, $callback);
-        $this->watchers[$watcher] = true;
-        return static function() use (&$watcher) {
-            $watcher->stop();
-            $watcher = null;
-        };
+        return $handler;
     }
 
 }

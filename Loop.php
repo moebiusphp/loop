@@ -4,67 +4,35 @@ namespace Moebius;
 use Closure;
 
 use Moebius\Loop\{
+    Handler,
     Factory,
-    EventLoop,
-    DriverInterface,
-    DriverFactory,
-    TimeoutException,
-    RejectedException
+    DriverInterface
 };
 
 final class Loop {
 
-    private static ?EventLoop $loop = null;
+    private static ?DriverInterface $loop = null;
 
+    /**
+     * Get the event loop time in seconds.
+     */
     public static function getTime(): float {
-        return self::get()->getTime();
+        return self::getDriver()->getTime();
     }
 
-    public static function await(object $promise, float $timeout=null) {
-        $status = null;
-        $result = null;
+    public static function run(): void {
+        self::getDriver()->run();
+    }
 
-        $expiration = $timeout !== null ? self::getTime() + $timeout : null;
-
-        $promise->then(
-            static function($value) use (&$status, &$result) {
-                if ($status === null) {
-                    $status = true;
-                    $result = $value;
-                }
-            },
-            static function($reason) use (&$status, &$result) {
-                if ($status === null) {
-                    $status = false;
-                    $result = $reason;
-                }
-            }
-        );
-
-        self::run(static function() use (&$status, &$result) {
-            return $status === null;
-        });
-
-        if ($status === true) {
-            return $result;
-        } elseif ($status === false) {
-            if ($result instanceof \Throwable) {
-                throw $result;
-            } else {
-                throw new RejectedException($result);
-            }
-        } else {
-            throw new TimeoutException("Await timed out after $timeout seconds");
-        }
+    public static function stop(): void {
+        self::getDriver()->stop();
     }
 
     /**
-     * Run the loop as long as $shouldResumeFunction returns true. If no
-     * function is provided, the loop will run until no more events are
-     * are pending.
+     * Run the event loop until the promise is resolved.
      */
-    public static function run(Closure $shouldResumeFunction=null): void {
-        self::get()->run($shouldResumeFunction);
+    public static function await(object $promise, float $timeout=null): mixed {
+        return self::getDriver()->await($promise, $timeout);
     }
 
     /**
@@ -72,7 +40,7 @@ final class Loop {
      * loop, or delay according to $delay.
      */
     public static function defer(Closure $callback): void {
-        self::get()->defer($callback);
+        self::getDriver()->defer($callback);
     }
 
     /**
@@ -80,26 +48,35 @@ final class Loop {
      * currently executing callback and any other queued microtasks.
      */
     public static function queueMicrotask(Closure $callback, mixed $argument=null): void {
-        self::get()->queueMicrotask($callback, $argument);
+        self::getDriver()->queueMicrotask($callback, $argument);
+    }
+
+
+    /**
+     * Schedule a callback to be exercuted after all deferred and microtasks
+     * this loop iteration. This function is intended to schedule callbacks
+     * for running in the next event loop iteration to create custom event
+     * types.
+     */
+    public static function poll(Closure $callback): void {
+        self::getDriver()->poll($callback);
     }
 
     /**
      * Schedule a callback to run after $time seconds.
      */
-    public static function delay(float $time, Closure $callback): Closure {
-        return self::get()->delay($time, $callback);
-    }
-
-    public static function interval(float $interval, Closure $callback): Closure {
-        return self::get()->interval($interval, $callback);
+    public static function delay(float $time, Closure $callback=null): Handler {
+        $handler = self::getDriver()->delay($time);
+        if ($callback !== null) {
+            $handler->then($callback);
+        }
+        return $handler;
     }
 
     /**
-     * Enqueue the provided callback as a microtask whenever a stream resource
-     * becomes readable. The callbacks stop when the resource is closed or when
-     * the returned callback is invoked.
+     * Schedule a callback to run as soon as $resource becomes readable or closed.
      */
-    public static function readable(mixed $resource, Closure $callback): Closure {
+    public static function readable(mixed $resource, Closure $callback=null): Handler {
         if (!\is_resource($resource) || \get_resource_type($resource) !== 'stream') {
             throw new \TypeError("Expecting a stream resource");
         }
@@ -110,59 +87,60 @@ final class Loop {
         ) {
             throw new \TypeError("Expecting a readable stream resource");
         }
-        return self::get()->readable($resource, $callback);
+        $handler = self::getDriver()->readable($resource);
+        if ($callback) {
+            $handler->then($callback);
+        }
+        return $handler;
     }
 
-    /**
-     * Read data from the stream resource until EOF. When EOF is reached
-     * $callback will be invoked with an empty string ''.
-     */
-    public static function read(mixed $resource, Closure $callback, ?Closure $onError=null): Closure {
-        $meta = \stream_get_meta_data($resource);
-        $cleanup = [];
-        if ($meta['blocked']) {
-            if (!\stream_set_blocking($resource, false)) {
-                throw new \RuntimeException("Unable to set stream to non-blocking mode");
-            }
+    public static function read(mixed $resource, Closure $callback=null): Handler {
+        if (!\is_resource($resource) || \get_resource_type($resource) !== 'stream') {
+            throw new \TypeError("Expecting a stream resource");
         }
-        \stream_set_read_buffer($resource, 0);
+        $meta = \stream_get_meta_data($resource);
+        if (
+            strpos($meta['mode'], 'r') === false &&
+            strpos($meta['mode'], '+') === false
+        ) {
+            throw new \TypeError("Expecting a readable stream resource");
+        }
+        \stream_set_blocking($resource, false);
 
-        $cancelFunction = self::readable($resource, function() use ($resource, $callback, $onError, &$cancelFunction) {
-            $error = null;
-            if (\feof($resource)) {
-                if ($cancelFunction) {
-                    $cancelFunction();
-                    $cancelFunction = null;
-                }
-                self::queueMicrotask($callback, '');
+        $cancelled = false;
+        $fulfill = null;
+
+        $pump = static function() use ($callback, $resource, &$cancelled, &$pump, &$fulfill) {
+            if ($cancelled) {
                 return;
             }
-            \set_error_handler(static function($errno, $errstr, $errfile, $errline) use (&$error) {
-                $error = new \ErrorException($errstr, 0, $errno, $errfile, $errline);
-            });
-            $chunk = \stream_get_contents($resource, 65536);
-            \restore_error_handler();
-            if (null === $error && $chunk === false) {
-                $error = new \RuntimeException("Failed to read stream");
-            }
-            if (null !== $error) {
-                if ($onError) {
-                    self::queueMicrotask($onError, $error);
+            try {
+                if (\feof($resource)) {
+                    $callback('');
+                    $fulfill(null);
+                } else {
+                    $chunk = \stream_get_contents($resource, 65536);
+                    if ($chunk === false) {
+                        throw new IOException("Stream failed");
+                    }
+                    if ($chunk !== '') {
+                        $callback($chunk);
+                    }
+                    self::readable($resource, $pump);
                 }
-                fclose($resource);
-                $cancelFunction();
-                $cancelFunction = null;
-            }
-            if ($chunk !== '') {
-                self::queueMicrotask($callback, $chunk);
-            }
-        });
-
-        return static function() use (&$cancelFunction) {
-            if ($cancelFunction) {
-                $cancelFunction();
+            } catch (\Throwable $e) {
+                self::handleException($e);
             }
         };
+
+        $innerHandler = self::readable($resource, $pump);
+
+        [$outerHandler, $fulfill] = Handler::create(function() use ($innerHandler, &$cancelled) {
+            $cancelled = true;
+            $innerHandler->cancel();
+        });
+
+        return $outerHandler;
     }
 
     /**
@@ -170,7 +148,7 @@ final class Loop {
      * becomes writable. The callbacks stop when the resource is closed or when
      * the returned callback is invoked.
      */
-    public static function writable(mixed $resource, Closure $callback): Closure {
+    public static function writable(mixed $resource, Closure $callback=null): Handler {
         if (!\is_resource($resource) || \get_resource_type($resource) !== 'stream') {
             throw new \TypeError("Expecting a stream resource");
         }
@@ -181,26 +159,32 @@ final class Loop {
         ) {
             throw new \TypeError("Expecting a writable stream resource");
         }
-        return self::get()->writable($resource, $callback);
-    }
-
-    /**
-     * Enqueue the provided callback as a microtask whenever a signal is received by
-     * the process. The callbacks stop when the resource is closed or when the 
-     * returned callback is invoked.
-     */
-    public static function signal(int $signalNumber, Closure $callback): Closure {
-        return self::get()->signal($signalNumber, $callback);
+        $handler = self::getDriver()->writable($resource);
+        if ($callback) {
+            $handler->then($callback);
+        }
+        return $handler;
     }
 
     /**
      * Return the event loop instance
      */
-    public static function get(): EventLoop {
-        if (self::$loop === null) {
-            self::$loop = new EventLoop(Factory::getExceptionHandler());
+    private static function getDriver(): DriverInterface {
+        if (self::$loop !== null) {
+            return self::$loop;
         }
-        return self::$loop;
+        return self::$loop = Factory::getDriver();
+    }
+
+    private static function getExceptionHandler(): Closure {
+        if (self::$exceptionHandler !== null) {
+            return self::$exceptionHandler;
+        }
+        return self::$exceptionHandler = Factory::getExceptionHandler();
+    }
+
+    public static function setExceptionHandler(Closure $exceptionHandler): void {
+        self::$exceptionHandler = $exceptionHandler;
     }
 
 }

@@ -43,6 +43,7 @@ class Listeners {
     }
 
     public function add($resource, Closure $callback): Closure {
+die(" NOT WORKING phpd -dauto_prepend_file=vendor/autoload.php charm-tests/loop/00-basics/05-readable.php");
         $listenerId = $this->listenerId++;
         $resourceId = ($this->identifyFunction)($resource);
         if (!isset($this->resources[$resourceId])) {
@@ -53,6 +54,7 @@ class Listeners {
         }
         $this->listeners[$resourceId][$listenerId] = $callback;
         return function() use ($resourceId, $listenerId) {
+echo "REMOVING LISTENER\n";sleep(1);
             unset($this->listeners[$resourceId][$listenerId]);
             if (empty($this->listeners[$resourceId])) {
                 ($this->unsubscribers[$resourceId])();

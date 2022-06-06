@@ -1,2 +1,2 @@
 <?php
-Moebius\Loop::get();
+Moebius\Loop::getTime();

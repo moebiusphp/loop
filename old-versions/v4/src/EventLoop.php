@@ -1,6 +1,7 @@
 <?php
 namespace Moebius\Loop;
 
+use Charm\Util\ClosureTool;
 use Fiber;
 use Closure;
 use Moebius\Loop\Util\{
@@ -33,11 +34,10 @@ class EventLoop {
     private TimerQueue $timers;
     private ?Closure $cancelTimer = null;
 
-    private Listeners $readers;
-    private Listeners $writers;
+    private ?Listeners $readers = null;
+    private ?Listeners $writers = null;
 
-    private Listeners $signals;
-    private EventLoop $self;
+    private ?Listeners $signals = null;
 
     public function __construct(Closure $exceptionHandler) {
         $this->driver = Factory::getDriver();
@@ -47,6 +47,19 @@ class EventLoop {
         $this->writers = new Listeners($this->driver->writable(...), $this->defer(...), \get_resource_id(...));
         $this->signals = new Listeners($this->driver->signal(...), $this->defer(...), \intval(...));
         $this->keepAliveUntilEnd();
+    }
+
+    public function getState(): array {
+        return [
+            'deferred' => count($this->deferred),
+            'defLow' => $this->deferredLow,
+            'defHigh' => $this->deferredHigh,
+            'microtasks' => count($this->microtasks),
+            'timers' => !$this->timers?->isEmpty(),
+            'readers' => !$this->readers?->isEmpty(),
+            'writers' => !$this->writers?->isEmpty(),
+            'signals' => !$this->signals?->isEmpty(),
+        ];
     }
 
     private function hasWork(): bool {
@@ -66,8 +79,9 @@ class EventLoop {
     private function keepAliveUntilEnd() {
         static $count = 100;
         if ($this->hasWork()) {
+print_r($this->getState());
+sleep(1);
             \register_shutdown_function($this->keepAliveUntilEnd(...));
-            $this->run();
         } elseif (--$count >= 0) {
             \register_shutdown_function($this->keepAliveUntilEnd(...));
         }
@@ -104,6 +118,7 @@ class EventLoop {
      * Schedule a job to run immediately
      */
     public function defer(Closure $callback): void {
+        //echo "defer ".(new ClosureTool($callback))."\n";
         $this->deferred[$this->deferredHigh++] = $callback;
         if (!$this->scheduled) {
             $this->scheduled = true;
@@ -163,19 +178,29 @@ class EventLoop {
     }
 
     private function runDeferred(): void {
+echo "runDeferred()\n";
         $this->scheduled = false;
         $deferredHigh = $this->deferredHigh;
         try {
             $this->runMicrotasks();
             while (!$this->stopped && $this->deferredLow < $deferredHigh) {
-                ($this->deferred[$this->deferredLow++])();
+                $closure = $this->deferred[$this->deferredLow];
+                unset($this->deferred[$this->deferredLow++]);
+                //echo " - running ".(new ClosureTool($closure))."\n";
                 if ($this->microtaskLow < $this->microtaskHigh) {
                     $this->runMicrotasks();
                 }
             }
         } catch (\Throwable $e) {
+            //echo $e->getMessage()."\n";
             $this->stopped = true;
             ($this->exceptionHandler)($e);
+        }
+        if ($this->deferredLow < $this->deferredHigh) {
+            if (!$this->scheduled) {
+                $this->scheduled = true;
+                $this->driver->defer($this->runDeferred(...));
+            }
         }
     }
 
