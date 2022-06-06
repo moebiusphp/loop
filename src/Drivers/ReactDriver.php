@@ -17,15 +17,30 @@ class ReactDriver implements DriverInterface {
     protected array $readStreams = [];
     protected array $writeStreams =[];
     protected bool $stopped = false;
+    protected bool $scheduled = false;
+    protected int $incompleted = 0;
+/*
     private bool $shutdownDetected = false;
     protected bool $shutdownHandlerInstalled = false;
-
+*/
     public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
+        $this->scheduled = true;
+        \register_shutdown_function(self::shutdownRun(...));
+/*
         \register_shutdown_function(function() {
             $this->shutdownDetected = true;
         });
+*/
+    }
 
+    private function shutdownRun(): void {
+        $this->scheduled = false;
+        if ($this->incompleted > 0) {
+            // Don't run the event loop if a callback was incompleted (die() was called)
+            return;
+        }
+        $this->run();
     }
 
     public function getTime(): float {
@@ -38,9 +53,11 @@ class ReactDriver implements DriverInterface {
     }
 
     public function stop(): void {
+/*
         if (!$this->shutdownDetected && !$this->shutdownHandlerInstalled) {
-            \register_shutdown_handler($this->run(...));
+            \register_shutdown_function($this->run(...));
         }
+*/
         $this->stopped = true;
         Loop::stop();
     }
@@ -82,6 +99,9 @@ class ReactDriver implements DriverInterface {
     }
 
     public function defer(Closure $callable): void {
+        if (!$this->scheduled) {
+            \register_shutdown_function($this->shutdownRun(...));
+        }
         $this->deferredHigh++;
         Loop::futureTick($this->wrap($callable, null, true));
     }
@@ -91,6 +111,9 @@ class ReactDriver implements DriverInterface {
     }
 
     public function delay(float $time, Closure $callback=null): Handler {
+        if (!$this->scheduled) {
+            \register_shutdown_function($this->shutdownRun(...));
+        }
         $timer = null;
         [$handler, $fulfill] = Handler::create(static function() use (&$timer) {
             Loop::cancelTimer($timer);
@@ -103,6 +126,9 @@ class ReactDriver implements DriverInterface {
     }
 
     public function readable($resource, Closure $callback=null): Handler {
+        if (!$this->scheduled) {
+            \register_shutdown_function($this->shutdownRun(...));
+        }
         $id = \get_resource_id($resource);
         if (isset($this->readStreams[$id])) {
             throw new \LogicException("Already subscribed to this resource");
@@ -128,6 +154,9 @@ class ReactDriver implements DriverInterface {
     }
 
     public function writable($resource, Closure $callback=null): Handler {
+        if (!$this->scheduled) {
+            \register_shutdown_function($this->shutdownRun(...));
+        }
         $id = \get_resource_id($resource);
         if (isset($this->writeStreams[$id])) {
             throw new \LogicException("Already subscribed to this resource");
@@ -154,6 +183,7 @@ class ReactDriver implements DriverInterface {
 
     protected function wrap(Closure $callback, mixed $argument=null, bool $deferred=false): Closure {
         return function() use ($callback, $argument, $deferred) {
+            ++$this->incompleted;
             if ($deferred) {
                 ++$this->deferredLow;
             }
@@ -163,11 +193,14 @@ class ReactDriver implements DriverInterface {
                     $this->runMicrotasks();
                 }
                 if ($this->stopped) {
+                    --$this->incompleted;
                     return;
                 }
                 $callback($argument);
                 $this->runMicrotasks();
+                --$this->incompleted;
             } catch (\Throwable $e) {
+                --$this->incompleted;
                 ($this->exceptionHandler)($e);
                 $this->stop();
             }

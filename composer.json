@@ -22,7 +22,7 @@
         }
     ],
     "require": {
-        "moebius/promise": "dev-master",
+        "moebius/promise": ">=1.0.100",
         "composer/semver": "^3.3",
         "charm/fallback-logger": "^1.0"
     },
@@ -35,7 +35,7 @@
         "ext-pcntl": "For handling process signals"
     },
     "require-dev": {
-        "charm/testing": "^1.0"
+        "charm/testing": ">=1 <2"
     },
     "minimum-stability": "dev",
     "prefer-stable": true
