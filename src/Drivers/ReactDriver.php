@@ -17,9 +17,15 @@ class ReactDriver implements DriverInterface {
     protected array $readStreams = [];
     protected array $writeStreams =[];
     protected bool $stopped = false;
+    private bool $shutdownDetected = false;
+    protected bool $shutdownHandlerInstalled = false;
 
     public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
+        \register_shutdown_function(function() {
+            $this->shutdownDetected = true;
+        });
+
     }
 
     public function getTime(): float {
@@ -32,6 +38,9 @@ class ReactDriver implements DriverInterface {
     }
 
     public function stop(): void {
+        if (!$this->shutdownDetected && !$this->shutdownHandlerInstalled) {
+            \register_shutdown_handler($this->run(...));
+        }
         $this->stopped = true;
         Loop::stop();
     }
