@@ -94,55 +94,6 @@ final class Loop {
         return $handler;
     }
 
-    public static function read(mixed $resource, Closure $callback=null): Handler {
-        if (!\is_resource($resource) || \get_resource_type($resource) !== 'stream') {
-            throw new \TypeError("Expecting a stream resource");
-        }
-        $meta = \stream_get_meta_data($resource);
-        if (
-            strpos($meta['mode'], 'r') === false &&
-            strpos($meta['mode'], '+') === false
-        ) {
-            throw new \TypeError("Expecting a readable stream resource");
-        }
-        \stream_set_blocking($resource, false);
-
-        $cancelled = false;
-        $fulfill = null;
-
-        $pump = static function() use ($callback, $resource, &$cancelled, &$pump, &$fulfill) {
-            if ($cancelled) {
-                return;
-            }
-            try {
-                if (\feof($resource)) {
-                    $callback('');
-                    $fulfill(null);
-                } else {
-                    $chunk = \stream_get_contents($resource, 65536);
-                    if ($chunk === false) {
-                        throw new IOException("Stream failed");
-                    }
-                    if ($chunk !== '') {
-                        $callback($chunk);
-                    }
-                    self::readable($resource, $pump);
-                }
-            } catch (\Throwable $e) {
-                self::handleException($e);
-            }
-        };
-
-        $innerHandler = self::readable($resource, $pump);
-
-        [$outerHandler, $fulfill] = Handler::create(function() use ($innerHandler, &$cancelled) {
-            $cancelled = true;
-            $innerHandler->cancel();
-        });
-
-        return $outerHandler;
-    }
-
     /**
      * Enqueue the provided callback as a microtask whenever a stream resource
      * becomes writable. The callbacks stop when the resource is closed or when
