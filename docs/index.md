@@ -35,7 +35,7 @@ so Moebius provides some innovations to the scene.
 
 ## Reference
 
-The primary API for library and application authors:
+The primary API for library and application authors belongs to the [`Loop`](./Loop.md) class.
 
  * [`Moebius\Loop::defer(Closure $callback): void`](./Loop/defer.md) enqueues a callback
     to run as part of the normal callback queue.

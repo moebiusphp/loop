@@ -1,4 +1,8 @@
-# `Moebius\Loop::readable(resource $fp, $callback=null): Handle`
+# Loop::readable()
+
+```php
+Moebius\Loop::readable(resource $fp, $callback=null): Handle`
+```
 
 The `readable()` method will request that the operating system notifies us as soon
 as reading from the stream resource will not block.

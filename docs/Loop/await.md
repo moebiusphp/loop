@@ -1,4 +1,8 @@
-# `Moebius\Loop::await(object $promise, float $timeout=null): mixed`
+# Loop::await()
+
+```php
+Moebius\Loop::await(object $promise, float $timeout=null): mixed
+```
 
 The `await()` method will run the event loop until the promise gets resolved, or until `$timeout`
 seconds have passed. The return value is the result from the promise, or if the promise is

@@ -1,4 +1,8 @@
-# `Moebius\Loop::getTime(): float`
+# Loop::getTime()
+
+```php
+Moebius\Loop::getTime(): float
+```
 
 This method returns a reference time in seconds since an arbitrary point in time. 
 The time should be monotonic and ignore any time adjustments on the server.

@@ -1,4 +1,8 @@
-# `Moebius\Loop::writable(resource $fp, $callback=null): Handle`
+# Loop::writable()
+
+```php
+Moebius\Loop::writable(resource $fp, $callback=null): Handle
+```
 
 The `writable()` method will request that the operating system notifies us as soon
 as writing to the stream resource will not block.

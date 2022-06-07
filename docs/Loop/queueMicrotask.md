@@ -1,4 +1,8 @@
-# `Moebius\Loop::queueMicrotask(Closure $callback, mixed $argument=null)`
+# Loop::queueMicrotask()
+ 
+```php
+Moebius\Loop::queueMicrotask(Closure $callback, mixed $argument=null)`
+```
 
 [^1] The `queueMicrotask()` method queues a microtask queues a microtask to be executed at a safe time
 prior to control returning to the main event loop.

@@ -1,4 +1,8 @@
-# `Moebius\Loop::defer(Closure $callback): void`
+# Loop::defer()
+
+```php
+Moebius\Loop::defer(Closure $callback): void
+```
 
 The `defer()` method enqueues a task to run as part of the event loop's queue.
 The primary purpose of deferring a function is to allow other events to be taken
