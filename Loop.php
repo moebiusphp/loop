@@ -6,33 +6,35 @@ use Closure;
 use Moebius\Loop\{
     Handler,
     Factory,
-    DriverInterface
+    DriverInterface,
+    EventLoop
 };
 
 final class Loop {
 
+    private static ?DriverInterface $rootLoop = null;
     private static ?DriverInterface $loop = null;
 
     /**
      * Get the event loop time in seconds.
      */
     public static function getTime(): float {
-        return self::getDriver()->getTime();
+        return (self::$loop ?? self::getDriver())->getTime();
     }
 
     public static function run(): void {
-        self::getDriver()->run();
+        (self::$loop ?? self::getDriver())->run();
     }
 
     public static function stop(): void {
-        self::getDriver()->stop();
+        (self::$loop ?? self::getDriver())->stop();
     }
 
     /**
      * Run the event loop until the promise is resolved.
      */
     public static function await(object $promise, float $timeout=null): mixed {
-        return self::getDriver()->await($promise, $timeout);
+        return (self::$loop ?? self::getDriver())->await($promise, $timeout);
     }
 
     /**
@@ -40,7 +42,7 @@ final class Loop {
      * loop, or delay according to $delay.
      */
     public static function defer(Closure $callback): void {
-        self::getDriver()->defer($callback);
+        (self::$loop ?? self::getDriver())->defer($callback);
     }
 
     /**
@@ -48,7 +50,7 @@ final class Loop {
      * currently executing callback and any other queued microtasks.
      */
     public static function queueMicrotask(Closure $callback, mixed $argument=null): void {
-        self::getDriver()->queueMicrotask($callback, $argument);
+        (self::$loop ?? self::getDriver())->queueMicrotask($callback, $argument);
     }
 
 
@@ -59,14 +61,14 @@ final class Loop {
      * types.
      */
     public static function poll(Closure $callback): void {
-        self::getDriver()->poll($callback);
+        (self::$loop ?? self::getDriver())->poll($callback);
     }
 
     /**
      * Schedule a callback to run after $time seconds.
      */
     public static function delay(float $time, Closure $callback=null): Handler {
-        $handler = self::getDriver()->delay($time);
+        $handler = (self::$loop ?? self::getDriver())->delay($time);
         if ($callback !== null) {
             $handler->then($callback);
         }
@@ -87,7 +89,7 @@ final class Loop {
         ) {
             throw new \TypeError("Expecting a readable stream resource");
         }
-        $handler = self::getDriver()->readable($resource);
+        $handler = (self::$loop ?? self::getDriver())->readable($resource);
         if ($callback) {
             $handler->then($callback);
         }
@@ -110,7 +112,7 @@ final class Loop {
         ) {
             throw new \TypeError("Expecting a writable stream resource");
         }
-        $handler = self::getDriver()->writable($resource);
+        $handler = (self::$loop ?? self::getDriver())->writable($resource);
         if ($callback) {
             $handler->then($callback);
         }
@@ -118,13 +120,26 @@ final class Loop {
     }
 
     /**
-     * Return the event loop instance
+     * Returns a child event loop which can be separately paused and resumed.
+     */
+    public static function get(): EventLoop {
+        return new EventLoop(self::$loop, static function(DriverInterface $loop): DriverInterface {
+            // child event loops can take over the static API while they are
+            // running events via this function.
+            $old = self::$loop;
+            self::$loop = $loop;
+            return $old;
+        });
+    }
+
+    /**
+     * Return the configured driver
      */
     private static function getDriver(): DriverInterface {
         if (self::$loop !== null) {
             return self::$loop;
         }
-        return self::$loop = Factory::getDriver();
+        return self::$rootLoop = self::$loop = Factory::getDriver();
     }
 
     private static function getExceptionHandler(): Closure {
@@ -136,6 +151,19 @@ final class Loop {
 
     public static function setExceptionHandler(Closure $exceptionHandler): void {
         self::$exceptionHandler = $exceptionHandler;
+    }
+
+    /**
+     * Function to check if the active event loop is actually
+     * the one running. For testing purposes.
+     *
+     * @internal
+     */
+    public static function test_driver_is(?DriverInterface $loop): bool {
+        if ($loop === null) {
+            return self::$loop === self::$rootLoop;
+        }
+        return $loop === self::$loop;
     }
 
 }

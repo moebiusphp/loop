@@ -2,11 +2,11 @@
 namespace Moebius\Loop\Drivers;
 
 use Closure;
-use Moebius\Loop\DriverInterface;
+use Moebius\Loop\RootEventLoopInterface;
 use Moebius\Loop\Handler;
 use React\EventLoop\Loop;
 
-class ReactDriver implements DriverInterface {
+class ReactDriver implements RootEventLoopInterface {
 
     protected int $deferredHigh = 0;
     protected int $deferredLow = 0;
@@ -93,17 +93,17 @@ class ReactDriver implements DriverInterface {
         }
     }
 
-    public function queueMicrotask(Closure $callback, mixed $argument=null): void {
+    public function queueMicrotask(Closure $callback, mixed ...$args): void {
         $this->microtasks[$this->micHigh] = $callback;
-        $this->microtaskArgs[$this->micHigh++] = $argument;
+        $this->microtaskArgs[$this->micHigh++] = $args;
     }
 
-    public function defer(Closure $callable): void {
+    public function defer(Closure $callable, mixed ...$args): void {
         if (!$this->scheduled) {
+            $this->scheduled = true;
             \register_shutdown_function($this->shutdownRun(...));
         }
-        $this->deferredHigh++;
-        Loop::futureTick($this->wrap($callable, null, true));
+        Loop::futureTick($this->wrap($callable, ...$args));
     }
 
     public function poll(Closure $callable): void {
@@ -112,6 +112,7 @@ class ReactDriver implements DriverInterface {
 
     public function delay(float $time, Closure $callback=null): Handler {
         if (!$this->scheduled) {
+            $this->scheduled = true;
             \register_shutdown_function($this->shutdownRun(...));
         }
         $timer = null;
@@ -127,6 +128,7 @@ class ReactDriver implements DriverInterface {
 
     public function readable($resource, Closure $callback=null): Handler {
         if (!$this->scheduled) {
+            $this->scheduled = true;
             \register_shutdown_function($this->shutdownRun(...));
         }
         $id = \get_resource_id($resource);
@@ -155,6 +157,7 @@ class ReactDriver implements DriverInterface {
 
     public function writable($resource, Closure $callback=null): Handler {
         if (!$this->scheduled) {
+            $this->scheduled = true;
             \register_shutdown_function($this->shutdownRun(...));
         }
         $id = \get_resource_id($resource);
@@ -181,28 +184,24 @@ class ReactDriver implements DriverInterface {
         return $handler;
     }
 
-    protected function wrap(Closure $callback, mixed $argument=null, bool $deferred=false): Closure {
-        return function() use ($callback, $argument, $deferred) {
+    protected function wrap(Closure $callback, mixed ...$args): Closure {
+        return function() use ($callback, $args, $deferred) {
             ++$this->incompleted;
-            if ($deferred) {
-                ++$this->deferredLow;
-            }
 
             try {
                 if ($this->micLow < $this->micHigh) {
                     $this->runMicrotasks();
                 }
                 if ($this->stopped) {
-                    --$this->incompleted;
                     return;
                 }
-                $callback($argument);
+                $callback(...$args);
                 $this->runMicrotasks();
-                --$this->incompleted;
             } catch (\Throwable $e) {
-                --$this->incompleted;
                 ($this->exceptionHandler)($e);
                 $this->stop();
+            } finally {
+                --$this->incompleted;
             }
         };
     }
@@ -210,10 +209,10 @@ class ReactDriver implements DriverInterface {
     protected function runMicrotasks(): void {
         while (!$this->stopped && $this->micLow < $this->micHigh) {
             $callback = $this->microtasks[$this->micLow];
-            $argument = $this->microtaskArgs[$this->micLow];
+            $args = $this->microtaskArgs[$this->micLow];
             unset($this->microtasks[$this->micLow], $this->microtaskArgs[$this->micLow]);
             ++$this->micLow;
-            $callback($argument);
+            $callback(...$args);
         }
     }
 }

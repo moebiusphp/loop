@@ -2,18 +2,19 @@
 namespace Moebius\Loop\Drivers;
 
 use Closure;
-use Moebius\Loop\DriverInterface;
+use Moebius\Loop\RootEventLoopInterface;
 use Moebius\Loop\Handler;
 use Moebius\Loop\Util\TimerQueue;
 use Moebius\Loop\Util\Timer;
 
 
-class NativeDriver implements DriverInterface {
+class NativeDriver implements RootEventLoopInterface {
 
     protected Closure $exceptionHandler;
     protected TimerQueue $timers;
 
     protected array $deferred = [];
+    protected array $deferredArgs = [];
     protected int $defLow = 0, $defHigh = 0;
 
     protected array $microtasks = [], $microtaskArgs = [];
@@ -98,14 +99,12 @@ class NativeDriver implements DriverInterface {
                 if ($count > 0) {
                     foreach ($read as $resource) {
                         $id = \get_resource_id($resource);
-                        $this->microtasks[$this->micHigh] = $this->readListeners[$id];
-                        $this->microtaskArgs[$this->micHigh++] = $resource;
+                        $this->queueMicrotask($this->readListeners[$id], $resource);
                         unset($this->readStreams[$id], $this->readListeners[$id]);
                     }
                     foreach ($write as $resource) {
                         $id = \get_resource_id($resource);
-                        $this->microtasks[$this->micHigh] = $this->writeListeners[$id];
-                        $this->microtaskArgs[$this->micHigh++] = $resource;
+                        $this->queueMicrotask($this->writeListeners[$id], $resource);
                         unset($this->writeStreams[$id], $this->writeListeners[$id]);
                     }
                 }
@@ -141,13 +140,14 @@ class NativeDriver implements DriverInterface {
         $this->stopped = true;
     }
 
-    public function defer(Closure $callback): void {
-        $this->deferred[$this->defHigh++] = $callback;
+    public function defer(Closure $callback, mixed ...$args): void {
+        $this->deferred[$this->defHigh] = $callback;
+        $this->deferredArgs[$this->defHigh++] = $args;
     }
 
-    public function queueMicrotask(Closure $callback, mixed $argument=null): void {
+    public function queueMicrotask(Closure $callback, mixed ...$args): void {
         $this->microtasks[$this->micHigh] = $callback;
-        $this->microtaskArgs[$this->micHigh++] = $argument;
+        $this->microtaskArgs[$this->micHigh++] = $args;
     }
 
     public function poll(Closure $callback): void {
@@ -214,8 +214,10 @@ class NativeDriver implements DriverInterface {
         $defHigh = $this->defHigh;
         while ($this->defLow < $defHigh) {
             $callback = $this->deferred[$this->defLow];
-            unset($this->deferred[$this->defLow++]);
-            $callback();
+            $args = $this->deferredArgs[$this->defLow];
+            unset($this->deferred[$this->defLow], $this->deferredArgs[$this->defLow]);
+            ++$this->defLow;
+            $callback(...$args);
             $this->runMicrotasks();
         }
     }
@@ -233,10 +235,10 @@ class NativeDriver implements DriverInterface {
     protected function runMicrotasks(): void {
         while ($this->micLow < $this->micHigh) {
             $callback = $this->microtasks[$this->micLow];
-            $argument = $this->microtaskArgs[$this->micLow];
+            $args = $this->microtaskArgs[$this->micLow];
             unset($this->microtasks[$this->micLow], $this->microtaskArgs[$this->micLow]);
             ++$this->micLow;
-            $callback($argument);
+            $callback(...$args);
         }
     }
 

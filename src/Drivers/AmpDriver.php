@@ -34,8 +34,8 @@ class AmpDriver extends ReactDriver {
         $this->loop->stop();
     }
 
-    public function defer(Closure $callback): void {
-        $this->loop->defer($this->wrap($callback));
+    public function defer(Closure $callback, mixed ...$args): void {
+        $this->loop->defer($this->wrap($callback, ...$args));
     }
 
     public function poll(Closure $callback): void {

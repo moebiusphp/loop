@@ -5,8 +5,6 @@ use Closure;
 
 interface DriverInterface {
 
-    public function __construct(Closure $exceptionHandler);
-
     /**
      * Get a time reference in seconds from an arbitrary point in time. This time
      * reference is monotonic and may not be identical to wall-clock time.
@@ -33,7 +31,7 @@ interface DriverInterface {
      * Schedule a callback to run as soon as possible following all other scheduled
      * callbacks.
      */
-    public function defer(Closure $callback): void;
+    public function defer(Closure $callback, mixed ...$args): void;
 
     /**
      * Schedule a callback to run as soon as possible following before any deferred

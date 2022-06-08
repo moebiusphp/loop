@@ -3,7 +3,6 @@ namespace Moebius\Loop\Drivers;
 
 use Closure;
 use Moebius\Loop\Handler;
-use Moebius\Loop\DriverInterface;
 
 class EvDriver extends NativeDriver {
 
