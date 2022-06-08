@@ -6,7 +6,7 @@ use Moebius\Loop\RootEventLoopInterface;
 use Moebius\Loop\Handler;
 use Moebius\Loop\Util\TimerQueue;
 use Moebius\Loop\Util\Timer;
-
+use Charm\FallbackLogger;
 
 class NativeDriver implements RootEventLoopInterface {
 
@@ -30,10 +30,12 @@ class NativeDriver implements RootEventLoopInterface {
     protected array $writeListeners = [];
 
     protected bool $stopped = false;
+    protected ?\Psr\Log\LoggerInterface $debug = null;
 
     public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
         $this->timers = new TimerQueue();
+        $this->debug = \getenv("MOEBIUS_DEBUG") ? FallbackLogger::get() : null;
         \register_shutdown_function($this->run(...));
     }
 
@@ -41,7 +43,7 @@ class NativeDriver implements RootEventLoopInterface {
         return hrtime(true) / 1_000_000_000;
     }
 
-    public function await(object $promise): mixed {
+    public function await(object $promise, ?float $timeLimit): mixed {
         $state = null;
         $value = null;
         $promise->then(static function($result) use (&$state, &$value) {
@@ -56,7 +58,18 @@ class NativeDriver implements RootEventLoopInterface {
             }
         });
 
-        $this->poll($checker = function() use (&$state, &$checker) {
+        if ($timeLimit !== null) {
+            $this->delay($timeLimit)->then(static function() use (&$state, &$value, $promise) {
+                if ($state === null) {
+                    $state = true;
+                    $value = $promise;
+                }
+            });
+        }
+
+        // using poll because we can check if the promise is resolved after
+        // the deferred callbacks have runned
+        $this->poll($checker = function() use (&$state, &$checker, $promise) {
             if ($state === null) {
                 // keep polling
                 $this->poll($checker);
@@ -80,7 +93,14 @@ class NativeDriver implements RootEventLoopInterface {
     public function run(): void {
         $this->stopped = false;
 
-        do {
+        while (
+            ($this->defLow < $this->defHigh) ||
+            ($this->pollLow < $this->pollHigh) ||
+            ($this->micLow < $this->micHigh) ||
+            !empty($this->readStreams) ||
+            !empty($this->writeStreams) ||
+            !$this->timers->isEmpty()
+        ) {
             if (
                 ($this->defLow < $this->defHigh) ||
                 ($this->micLow < $this->micHigh)
@@ -88,8 +108,18 @@ class NativeDriver implements RootEventLoopInterface {
                 $availableTime = 0;
             } else {
                 $nextTime = $this->timers->getNextTime() ?? $this->getTime() + 0.25;
-                $availableTime = max(0.25, $nextTime - $this->getTime());
+                $availableTime = max(0, min(0.25, $nextTime - $this->getTime()));
             }
+
+            $this->debug?->debug("NativeDriver: availableTime={availableTime} deferred={deferred} microtasks={microtasks} pollers={pollers} reads={reads} writes={writes} timers={timers}", [
+                'availableTime' => $availableTime,
+                'deferred' => $this->defHigh - $this->defLow,
+                'pollers' => $this->pollHigh - $this->pollLow,
+                'microtasks' => $this->micHigh - $this->micLow,
+                'reads' => count($this->readStreams),
+                'writes' => count($this->writeStreams),
+                'timers' => $this->timers->isEmpty() ? 0 : 1,
+            ]);
 
             if (!empty($this->readStreams) || !empty($this->writeStreams)) {
                 $read = $this->readStreams;
@@ -112,6 +142,7 @@ class NativeDriver implements RootEventLoopInterface {
                 usleep($availableTime * 1_000_000);
             }
 
+
             try {
                 $this->runMicrotasks();
                 $this->runTimers();
@@ -125,15 +156,7 @@ class NativeDriver implements RootEventLoopInterface {
             if ($this->stopped) {
                 break;
             }
-
-        } while (
-            ($this->defLow < $this->defHigh) ||
-            ($this->pollLow < $this->pollHigh) ||
-            ($this->micLow < $this->micHigh) ||
-            !empty($this->readStreams) ||
-            !empty($this->writeStreams) ||
-            !$this->timers->isEmpty()
-        );
+        }
     }
 
     public function stop(): void {
@@ -205,8 +228,9 @@ class NativeDriver implements RootEventLoopInterface {
         $time = $this->getTime();
         while (!$this->timers->isEmpty() && $this->timers->getNextTime() < $time) {
             $timer = $this->timers->dequeue();
-            ($timer->callback)($timer->time);
-            $this->runMicrotasks();
+            $this->defer($timer->callback, $timer->time);
+//            ($timer->callback)($timer->time);
+//            $this->runMicrotasks();
         }
     }
 

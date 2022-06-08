@@ -1,24 +1,14 @@
 Moebius\Loop
 ============
 
-An event loop focused on interoperability between the most
-popular event loops for PHP:
+An event-loop API for writing asynchronous code in traditional
+PHP code, while also working seamlessly with common asynchronous
+frameworks like React or Amp.
 
- * The Ev PECL extension
- * React
- * Amp
- * `stream_select()` built-in PHP combined with
-   `register_shutdown_function()`.
-
-The API is identical across all backend drivers, and ensures
-that your code will work together with legacy libraries
-designed for either Amp or React.
-
-This event loop is part of Moebius, a coroutine framework for
-PHP 8.1. With Moebius you will be able to use coroutines in
-your existing projects - even if they don't use an event loop
-today.
-
+Moebius Loop provides an elegant and consistent API for working
+with non-blocking I/O which works equally well in classic
+synchronous PHP code as with fully asynchronous frameworks
+like React or Amp.
 
 Laravel example
 ---------------

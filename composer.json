@@ -24,7 +24,9 @@
     "require": {
         "moebius/promise": ">=1.0.100",
         "composer/semver": "^3.3",
-        "charm/fallback-logger": "^1.0"
+        "charm/fallback-logger": "^1.0",
+        "moebius/common": "^1.0",
+        "charm/util-closuretool": "^1.0"
     },
     "scripts": {
         "test": "vendor/bin/charm-testing",

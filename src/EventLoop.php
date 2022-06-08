@@ -142,8 +142,8 @@ class EventLoop implements ChildEventLoopInterface {
         $this->parent->poll($this->wrap($callback));
     }
 
-    public function await(object $promise): mixed {
-        $this->parent->await($promise);
+    public function await(object $promise, ?float $timeLimit): mixed {
+        $this->parent->await($promise, $timeLimit);
     }
 
     public function run(): void {

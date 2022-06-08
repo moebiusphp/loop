@@ -25,7 +25,7 @@ interface DriverInterface {
     /**
      * Run the event loop until the promise has been either fulfilled or rejected
      */
-    public function await(object $promise): mixed;
+    public function await(object $promise, ?float $timeLimit): mixed;
 
     /**
      * Schedule a callback to run as soon as possible following all other scheduled
