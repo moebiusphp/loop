@@ -58,8 +58,11 @@ class NativeDriver implements RootEventLoopInterface {
             }
         });
 
+        $timeLimiter = null;
+
         if ($timeLimit !== null) {
-            $this->delay($timeLimit)->then(static function() use (&$state, &$value, $promise) {
+            $timeLimiter = $this->delay($timeLimit);
+            $timeLimiter->then(static function() use (&$state, &$value, $promise) {
                 if ($state === null) {
                     $state = true;
                     $value = $promise;
@@ -82,6 +85,9 @@ class NativeDriver implements RootEventLoopInterface {
         $this->run();
 
         if ($state === true) {
+            if ($value !== $promise && $timeLimiter) {
+                $timeLimiter->cancel();
+            }
             return $value;
         } elseif ($state === false) {
             throw $value;
