@@ -62,7 +62,7 @@ class ReactDriver implements RootEventLoopInterface {
         Loop::stop();
     }
 
-    public function await(object $promise): mixed {
+    public function await(object $promise, ?float $timeLimit): mixed {
         $state = null;
         $value = null;
         $promise->then(static function($result) use (&$state, &$value) {
@@ -76,15 +76,28 @@ class ReactDriver implements RootEventLoopInterface {
                 $value = $result;
             }
         });
-        $this->defer($again = function() use (&$state, &$poll, &$again) {
+        $this->poll($again = function() use (&$state, &$poll, &$again) {
             if ($state !== null) {
                 $this->stop();
             } else {
                 $this->poll($again);
             }
         });
+        $timeLimiter = null;
+        if ($timeLimit !== null) {
+            $timeLimiter = $this->delay($timeLimit);
+            $timeLimiter->then(static function() use (&$state, &$value, $promise) {
+                if ($state === null) {
+                    $state = true;
+                    $value = $promise;
+                }
+            }, static function($e) {});
+        };
         $this->run();
         if ($state === true) {
+            if ($timeLimiter && $value !== $promise) {
+                $timeLimiter->cancel();
+            }
             return $value;
         } elseif ($state === false) {
             throw $value;
@@ -185,7 +198,7 @@ class ReactDriver implements RootEventLoopInterface {
     }
 
     protected function wrap(Closure $callback, mixed ...$args): Closure {
-        return function() use ($callback, $args, $deferred) {
+        return function() use ($callback, $args) {
             ++$this->incompleted;
 
             try {
