@@ -114,7 +114,7 @@ class NativeDriver implements RootEventLoopInterface {
                 $availableTime = 0;
             } else {
                 $nextTime = $this->timers->getNextTime() ?? $this->getTime() + 0.25;
-                $availableTime = max(0, min(0.25, $nextTime - $this->getTime()));
+                $availableTime = max(0, min(0.1, $nextTime - $this->getTime()));
             }
 
             $this->debug?->debug("NativeDriver: availableTime={availableTime} deferred={deferred} microtasks={microtasks} pollers={pollers} reads={reads} writes={writes} timers={timers}", [
