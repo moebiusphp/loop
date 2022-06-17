@@ -38,10 +38,6 @@ class AmpDriver extends ReactDriver {
         $this->loop->defer($this->wrap($callback, ...$args));
     }
 
-    public function poll(Closure $callback): void {
-        $this->loop->defer($callback);
-    }
-
     public function delay(float $time, Closure $callback=null): Handler {
         $timer = null;
         [$handler, $fulfill] = Handler::create(function() use (&$timer) {

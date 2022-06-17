@@ -29,7 +29,6 @@ class EvDriver extends NativeDriver {
             try {
                 $this->runMicrotasks();
                 $this->runDeferred();
-                $this->runPollers();
             } catch (\Throwable $e) {
                 ($this->exceptionHandler)($e);
                 $this->stop();
@@ -41,7 +40,6 @@ class EvDriver extends NativeDriver {
 
         } while (
             ($this->defLow < $this->defHigh) ||
-            ($this->pollLow < $this->pollHigh) ||
             ($this->micLow < $this->micHigh) ||
             !empty($this->readStreams) ||
             !empty($this->writeStreams) ||

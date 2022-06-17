@@ -20,9 +20,6 @@ class NativeDriver implements RootEventLoopInterface {
     protected array $microtasks = [], $microtaskArgs = [];
     protected int $micLow = 0, $micHigh = 0;
 
-    protected array $pollers = [];
-    protected int $pollLow = 0, $pollHigh = 0;
-
     protected array $readStreams = [];
     protected array $readListeners = [];
 
@@ -67,15 +64,15 @@ class NativeDriver implements RootEventLoopInterface {
                     $state = true;
                     $value = $promise;
                 }
+            }, static function() {
+                // this function prevents logging of cancelled promises
             });
         }
 
-        // using poll because we can check if the promise is resolved after
-        // the deferred callbacks have runned
-        $this->poll($checker = function() use (&$state, &$checker, $promise) {
+        $this->defer($checker = function() use (&$state, &$checker, $promise) {
             if ($state === null) {
-                // keep polling
-                $this->poll($checker);
+                // keep polling until the promise is resolved
+                $this->defer($checker);
             } else {
                 // stop the loop, we've got a result
                 $this->stop();
@@ -99,9 +96,10 @@ class NativeDriver implements RootEventLoopInterface {
     public function run(): void {
         $this->stopped = false;
 
+        $tickTime = 0;
+
         while (
             ($this->defLow < $this->defHigh) ||
-            ($this->pollLow < $this->pollHigh) ||
             ($this->micLow < $this->micHigh) ||
             !empty($this->readStreams) ||
             !empty($this->writeStreams) ||
@@ -117,10 +115,9 @@ class NativeDriver implements RootEventLoopInterface {
                 $availableTime = max(0, min(0.1, $nextTime - $this->getTime()));
             }
 
-            $this->debug?->debug("NativeDriver: availableTime={availableTime} deferred={deferred} microtasks={microtasks} pollers={pollers} reads={reads} writes={writes} timers={timers}", [
+            $this->debug?->debug("NativeDriver: availableTime={availableTime} deferred={deferred} microtasks={microtasks} reads={reads} writes={writes} timers={timers}", [
                 'availableTime' => $availableTime,
                 'deferred' => $this->defHigh - $this->defLow,
-                'pollers' => $this->pollHigh - $this->pollLow,
                 'microtasks' => $this->micHigh - $this->micLow,
                 'reads' => count($this->readStreams),
                 'writes' => count($this->writeStreams),
@@ -144,20 +141,23 @@ class NativeDriver implements RootEventLoopInterface {
                         unset($this->writeStreams[$id], $this->writeListeners[$id]);
                     }
                 }
-            } else {
+            } elseif ($tickTime < 5000) {
+                // if a tick takes less than 5 microseconds, it generally means no real
+                // work was done
                 usleep($availableTime * 1_000_000);
             }
-
+            $tickStart = hrtime(true);
 
             try {
                 $this->runMicrotasks();
                 $this->runTimers();
                 $this->runDeferred();
-                $this->runPollers();
             } catch (\Throwable $e) {
                 ($this->exceptionHandler)($e);
                 $this->stop();
             }
+
+            $tickTime = hrtime(true) - $tickStart;
 
             if ($this->stopped) {
                 break;
@@ -177,10 +177,6 @@ class NativeDriver implements RootEventLoopInterface {
     public function queueMicrotask(Closure $callback, mixed ...$args): void {
         $this->microtasks[$this->micHigh] = $callback;
         $this->microtaskArgs[$this->micHigh++] = $args;
-    }
-
-    public function poll(Closure $callback): void {
-        $this->pollers[$this->pollHigh++] = $callback;
     }
 
     public function delay(float $time): Handler {
@@ -248,16 +244,6 @@ class NativeDriver implements RootEventLoopInterface {
             unset($this->deferred[$this->defLow], $this->deferredArgs[$this->defLow]);
             ++$this->defLow;
             $callback(...$args);
-            $this->runMicrotasks();
-        }
-    }
-
-    protected function runPollers(): void {
-        $pollHigh = $this->pollHigh;
-        while ($this->pollLow < $pollHigh) {
-            $callback = $this->pollers[$this->pollLow];
-            unset($this->pollers[$this->pollLow++]);
-            $callback();
             $this->runMicrotasks();
         }
     }

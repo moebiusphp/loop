@@ -41,14 +41,6 @@ interface DriverInterface {
     public function queueMicrotask(Closure $callback, mixed $argument=null): void;
 
     /**
-     * Schedule a callback to run as soon as possible after running callbacks
-     * scheduled for this iteration of the event loop cycle. The callback will be
-     * run before any read or write stream polling and should primarily schedule
-     * event callbacks for the next cycle.
-     */
-    public function poll(Closure $callback): void;
-
-    /**
      * Return an event handler promise which will be triggered as soon as `$time`
      * number of seconds have elapsed.
      */

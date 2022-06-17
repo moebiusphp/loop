@@ -10,7 +10,6 @@ class ReactDriver implements RootEventLoopInterface {
 
     protected int $deferredHigh = 0;
     protected int $deferredLow = 0;
-    protected int $pollOffset = -1;
 
     protected array $microtasks = [], $microtaskArgs = [];
     protected int $micLow = 0, $micHigh = 0;
@@ -76,11 +75,11 @@ class ReactDriver implements RootEventLoopInterface {
                 $value = $result;
             }
         });
-        $this->poll($again = function() use (&$state, &$poll, &$again) {
+        $this->defer($again = function() use (&$state, &$poll, &$again) {
             if ($state !== null) {
                 $this->stop();
             } else {
-                $this->poll($again);
+                $this->defer($again);
             }
         });
         $timeLimiter = null;
@@ -117,10 +116,6 @@ class ReactDriver implements RootEventLoopInterface {
             \register_shutdown_function($this->shutdownRun(...));
         }
         Loop::futureTick($this->wrap($callable, ...$args));
-    }
-
-    public function poll(Closure $callable): void {
-        $this->defer($callable);
     }
 
     public function delay(float $time, Closure $callback=null): Handler {
