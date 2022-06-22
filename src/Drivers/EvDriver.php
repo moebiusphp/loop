@@ -14,7 +14,7 @@ class EvDriver extends NativeDriver {
     }
 
     public function run(): void {
-        $this->stopped = false;
+        ++$this->running;
 
         do {
             if (
@@ -34,7 +34,7 @@ class EvDriver extends NativeDriver {
                 $this->stop();
             }
 
-            if ($this->stopped) {
+            if (0 === $this->running) {
                 break;
             }
 

@@ -26,8 +26,10 @@ class NativeDriver implements RootEventLoopInterface {
     protected array $writeStreams = [];
     protected array $writeListeners = [];
 
-    protected bool $stopped = false;
+    protected int $running = 0;
     protected ?\Psr\Log\LoggerInterface $debug = null;
+    protected int $awaitId = 0;
+    protected array $awaits = [];
 
     public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
@@ -41,60 +43,69 @@ class NativeDriver implements RootEventLoopInterface {
     }
 
     public function await(object $promise, ?float $timeLimit): mixed {
-        $state = null;
-        $value = null;
-        $promise->then(static function($result) use (&$state, &$value) {
-            if ($state === null) {
-                $state = true;
-                $value = $result;
-            }
-        }, static function($reason) use (&$state, &$value) {
-            if ($state === null) {
-                $state = false;
-                $value = $reason;
-            }
-        });
-
-        $timeLimiter = null;
-
-        if ($timeLimit !== null) {
-            $timeLimiter = $this->delay($timeLimit);
-            $timeLimiter->then(static function() use (&$state, &$value, $promise) {
+        $id = $this->awaitId++;
+        $this->awaits[$id] = true; //(new \Exception)->getTraceAsString();
+        try {
+            $state = null;
+            $value = null;
+            $promise->then(static function($result) use (&$state, &$value) {
                 if ($state === null) {
                     $state = true;
-                    $value = $promise;
+                    $value = $result;
                 }
-            }, static function() {
-                // this function prevents logging of cancelled promises
+            }, static function($reason) use (&$state, &$value) {
+                if ($state === null) {
+                    $state = false;
+                    $value = $reason;
+                }
             });
-        }
 
-        $this->defer($checker = function() use (&$state, &$checker, $promise) {
-            if ($state === null) {
-                // keep polling until the promise is resolved
-                $this->defer($checker);
+            $timeLimiter = null;
+
+            if ($timeLimit !== null) {
+                $timeLimiter = $this->delay($timeLimit);
+                $timeLimiter->then(static function() use (&$state, &$value, $promise) {
+                    if ($state === null) {
+                        $state = true;
+                        $value = $promise;
+                    }
+                }, static function() {
+                    // this function prevents logging of cancelled promises
+                });
+            }
+
+            $this->defer($checker = function() use (&$state, &$checker, $promise) {
+                if ($state === null) {
+                    // keep polling until the promise is resolved
+                    $this->defer($checker);
+                } else {
+                    // stop the loop, we've got a result
+                    $this->stop();
+                }
+            });
+
+            $this->run();
+
+            if ($state === true) {
+                if ($value !== $promise && $timeLimiter) {
+                    $timeLimiter->cancel();
+                }
+                return $value;
+            } elseif ($state === false) {
+                throw $value;
             } else {
-                // stop the loop, we've got a result
-                $this->stop();
+                return $promise;
+                throw new \LogicException("Promise never resolved, but event loop is empty");
             }
-        });
-
-        $this->run();
-
-        if ($state === true) {
-            if ($value !== $promise && $timeLimiter) {
-                $timeLimiter->cancel();
-            }
-            return $value;
-        } elseif ($state === false) {
-            throw $value;
-        } else {
-            throw new \LogicException("Promise never resolved, but event loop is empty");
+        } finally {
+            unset($this->awaits[$id]);
         }
     }
 
     public function run(): void {
-        $this->stopped = false;
+        $this->debug?->debug("NativeDriver: run()");
+        ++$this->running;
+        $running = $this->running;
 
         $tickTime = 0;
 
@@ -124,7 +135,23 @@ class NativeDriver implements RootEventLoopInterface {
                 'timers' => $this->timers->isEmpty() ? 0 : 1,
             ]);
 
+            if (MOEBIUS_DEBUG) {
+                usleep(250000);
+            }
+
             if (!empty($this->readStreams) || !empty($this->writeStreams)) {
+                foreach ($this->readStreams as $id => $readStream) {
+                    if (!\is_resource($readStream)) {
+                        $this->queueMicrotask($this->readListeners[$id], $resource);
+                        unset($this->readStreams[$id], $this->readListeners[$id]);
+                    }
+                }
+                foreach ($this->writeStreams as $id => $writeStream) {
+                    if (!\is_resource($writeStream)) {
+                        $this->queueMicrotask($this->writeListeners[$id], $resource);
+                        unset($this->writeStreams[$id], $this->writeListeners[$id]);
+                    }
+                }
                 $read = $this->readStreams;
                 $write = $this->writeStreams;
                 $void = [];
@@ -159,14 +186,18 @@ class NativeDriver implements RootEventLoopInterface {
 
             $tickTime = hrtime(true) - $tickStart;
 
-            if ($this->stopped) {
+            if ($running > $this->running) {
                 break;
             }
         }
     }
 
     public function stop(): void {
-        $this->stopped = true;
+        if ($this->running === 0) {
+            throw new \RuntimeException("NativeDriver: stop() called without run()");
+        }
+        $this->debug?->debug("NativeDriver: stop()");
+        --$this->running;
     }
 
     public function defer(Closure $callback, mixed ...$args): void {

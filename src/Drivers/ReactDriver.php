@@ -15,7 +15,7 @@ class ReactDriver implements RootEventLoopInterface {
     protected int $micLow = 0, $micHigh = 0;
     protected array $readStreams = [];
     protected array $writeStreams =[];
-    protected bool $stopped = false;
+    protected int $running = 0;
     protected bool $scheduled = false;
     protected int $incompleted = 0;
 /*
@@ -47,18 +47,20 @@ class ReactDriver implements RootEventLoopInterface {
     }
 
     public function run(): void {
-        $this->stopped = false;
-        Loop::run();
+        ++$this->running;
+        if (1 === $this->running) {
+            Loop::run();
+        }
     }
 
     public function stop(): void {
-/*
-        if (!$this->shutdownDetected && !$this->shutdownHandlerInstalled) {
-            \register_shutdown_function($this->run(...));
+        if (0 === $this->running) {
+            throw new \RuntimeException("ReactDriver: stop() without run()");
         }
-*/
-        $this->stopped = true;
-        Loop::stop();
+        --$this->running;
+        if (0 === $this->running) {
+            Loop::stop();
+        }
     }
 
     public function await(object $promise, ?float $timeLimit): mixed {
@@ -200,7 +202,7 @@ class ReactDriver implements RootEventLoopInterface {
                 if ($this->micLow < $this->micHigh) {
                     $this->runMicrotasks();
                 }
-                if ($this->stopped) {
+                if (0 === $this->running) {
                     return;
                 }
                 $callback(...$args);
@@ -215,7 +217,7 @@ class ReactDriver implements RootEventLoopInterface {
     }
 
     protected function runMicrotasks(): void {
-        while (!$this->stopped && $this->micLow < $this->micHigh) {
+        while ($this->running !== 0 && $this->micLow < $this->micHigh) {
             $callback = $this->microtasks[$this->micLow];
             $args = $this->microtaskArgs[$this->micLow];
             unset($this->microtasks[$this->micLow], $this->microtaskArgs[$this->micLow]);

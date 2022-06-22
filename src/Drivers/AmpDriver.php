@@ -9,14 +9,18 @@ use Amp\Loop\Driver;
 class AmpDriver extends ReactDriver {
 
     protected Driver $loop;
+    protected int $running = 0;
 
     public function __construct(Closure $exceptionHandler) {
+/*
         parent::__construct(function($e) use ($exceptionHandler) {
             $this->stop();
             $this->loop->defer(function() {
                 $this->stopped = false;
             });
         });
+*/
+        parent::__construct($exceptionHandler);
         $this->loop = \Amp\Loop::get();
         \register_shutdown_function($this->run(...));
     }
@@ -26,12 +30,20 @@ class AmpDriver extends ReactDriver {
     }
 
     public function run(): void {
-        $this->loop->run();
+        ++$this->running;
+        if ($this->running === 1) {
+            $this->loop->run();
+        }
     }
 
     public function stop(): void {
-        $this->stopped = true;
-        $this->loop->stop();
+        if (0 === $this->running) {
+            throw new \RuntimeException("AmpDriver: stop() without run()");
+        }
+        --$this->running;
+        if (0 === $this->running) {
+            $this->loop->stop();
+        }
     }
 
     public function defer(Closure $callback, mixed ...$args): void {
