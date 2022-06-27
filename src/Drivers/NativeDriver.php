@@ -2,6 +2,7 @@
 namespace Moebius\Loop\Drivers;
 
 use Closure;
+use Moebius\Loop;
 use Moebius\Loop\RootEventLoopInterface;
 use Moebius\Loop\Handler;
 use Moebius\Loop\Util\TimerQueue;
@@ -31,11 +32,28 @@ class NativeDriver implements RootEventLoopInterface {
     protected int $awaitId = 0;
     protected array $awaits = [];
 
+    protected bool $scheduled = false;
+
     public function __construct(Closure $exceptionHandler) {
         $this->exceptionHandler = $exceptionHandler;
         $this->timers = new TimerQueue();
         $this->debug = \getenv("MOEBIUS_DEBUG") ? FallbackLogger::get() : null;
-        \register_shutdown_function($this->run(...));
+        $this->schedule();
+    }
+
+    protected function schedule(): void {
+        if ($this->scheduled) {
+            return;
+        }
+        $this->scheduled = true;
+        \register_shutdown_function(function() {
+            $this->scheduled = false;
+            $this->run();
+        });
+    }
+
+    public function __destruct() {
+        $this->run();
     }
 
     public function getTime(): float {
@@ -187,8 +205,13 @@ class NativeDriver implements RootEventLoopInterface {
             $tickTime = hrtime(true) - $tickStart;
 
             if ($running > $this->running) {
+                // stop was called
                 break;
             }
+        }
+        if ($running === $this->running) {
+            // natural stop of the event loop
+            --$this->running;
         }
     }
 
@@ -201,16 +224,25 @@ class NativeDriver implements RootEventLoopInterface {
     }
 
     public function defer(Closure $callback, mixed ...$args): void {
+        if (!$this->scheduled) {
+            $this->schedule();
+        }
         $this->deferred[$this->defHigh] = $callback;
         $this->deferredArgs[$this->defHigh++] = $args;
     }
 
     public function queueMicrotask(Closure $callback, mixed ...$args): void {
+        if (!$this->scheduled) {
+            $this->schedule();
+        }
         $this->microtasks[$this->micHigh] = $callback;
         $this->microtaskArgs[$this->micHigh++] = $args;
     }
 
     public function delay(float $time): Handler {
+        if (!$this->scheduled) {
+            $this->schedule();
+        }
         $cancelFunction = null;
 
         [$handler, $fulfill] = Handler::create(static function() use (&$cancelFunction) {
@@ -226,6 +258,9 @@ class NativeDriver implements RootEventLoopInterface {
     }
 
     public function readable($resource): Handler {
+        if (!$this->scheduled) {
+            $this->schedule();
+        }
         $id = \get_resource_id($resource);
         if (isset($this->readStreams[$id])) {
             throw new \LogicException("Already read-watching this stream resource");
@@ -242,6 +277,9 @@ class NativeDriver implements RootEventLoopInterface {
     }
 
     public function writable($resource): Handler {
+        if (!$this->scheduled) {
+            $this->schedule();
+        }
         $id = \get_resource_id($resource);
         if (isset($this->writeStreams[$id])) {
             throw new \LogicException("Already write-watching this stream resource");
