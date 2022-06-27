@@ -183,7 +183,7 @@ final class Loop {
      * Returns a child event loop which can be separately paused and resumed.
      */
     public static function get(): EventLoop {
-        return new EventLoop(self::$loop, static function(DriverInterface $loop): DriverInterface {
+        return new EventLoop(self::$loop ?? self::getDriver(), static function(DriverInterface $loop): DriverInterface {
             // child event loops can take over the static API while they are
             // running events via this function.
             $old = self::$loop;
