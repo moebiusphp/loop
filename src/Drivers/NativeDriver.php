@@ -173,7 +173,8 @@ class NativeDriver implements RootEventLoopInterface {
                 $read = $this->readStreams;
                 $write = $this->writeStreams;
                 $void = [];
-                $count = \stream_select($read, $write, $void, 0, 1_000_000 * $availableTime);
+
+                $count = @\stream_select($read, $write, $void, 0, 1_000_000 * $availableTime);
                 if ($count > 0) {
                     foreach ($read as $resource) {
                         $id = \get_resource_id($resource);
