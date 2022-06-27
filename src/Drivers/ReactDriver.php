@@ -4,7 +4,8 @@ namespace Moebius\Loop\Drivers;
 use Closure;
 use Moebius\Loop\RootEventLoopInterface;
 use Moebius\Loop\Handler;
-use React\EventLoop\Loop;
+use React\EventLoop\Loop as ReactLoop;
+use React\EventLoop\LoopInterface as ReactLoopInterface;
 
 class ReactDriver implements RootEventLoopInterface {
 
@@ -18,19 +19,21 @@ class ReactDriver implements RootEventLoopInterface {
     protected int $running = 0;
     protected bool $scheduled = false;
     protected int $incompleted = 0;
+    private ReactLoopInterface $loop;
+    protected int $wrapCount = 0;
 /*
     private bool $shutdownDetected = false;
     protected bool $shutdownHandlerInstalled = false;
 */
     public function __construct(Closure $exceptionHandler) {
+        $this->loop = ReactLoop::get();
         $this->exceptionHandler = $exceptionHandler;
         $this->scheduled = true;
-        \register_shutdown_function(self::shutdownRun(...));
-/*
-        \register_shutdown_function(function() {
-            $this->shutdownDetected = true;
-        });
-*/
+        \register_shutdown_function($this->shutdownRun(...));
+    }
+
+    public function __destruct() {
+        $this->run();
     }
 
     private function shutdownRun(): void {
@@ -48,8 +51,10 @@ class ReactDriver implements RootEventLoopInterface {
 
     public function run(): void {
         ++$this->running;
-        if (1 === $this->running) {
-            Loop::run();
+        $running = $this->running;
+        $this->loop->run();
+        if ($running === $this->running) {
+            --$this->running;
         }
     }
 
@@ -59,7 +64,7 @@ class ReactDriver implements RootEventLoopInterface {
         }
         --$this->running;
         if (0 === $this->running) {
-            Loop::stop();
+            $this->loop->stop();
         }
     }
 
@@ -108,6 +113,9 @@ class ReactDriver implements RootEventLoopInterface {
     }
 
     public function queueMicrotask(Closure $callback, mixed ...$args): void {
+        if ($this->micHigh === $this->micLow) {
+            $this->defer(static function() {});
+        }
         $this->microtasks[$this->micHigh] = $callback;
         $this->microtaskArgs[$this->micHigh++] = $args;
     }
@@ -117,7 +125,7 @@ class ReactDriver implements RootEventLoopInterface {
             $this->scheduled = true;
             \register_shutdown_function($this->shutdownRun(...));
         }
-        Loop::futureTick($this->wrap($callable, ...$args));
+        $this->loop->futureTick($this->wrap($callable, ...$args));
     }
 
     public function delay(float $time, Closure $callback=null): Handler {
@@ -127,9 +135,9 @@ class ReactDriver implements RootEventLoopInterface {
         }
         $timer = null;
         [$handler, $fulfill] = Handler::create(static function() use (&$timer) {
-            Loop::cancelTimer($timer);
+            $this->loop->cancelTimer($timer);
         });
-        $timer = Loop::addTimer($time, $this->wrap($fulfill, $this->getTime() + $time));
+        $timer = $this->loop->addTimer($time, $this->wrap($fulfill, $this->getTime() + $time));
         if ($callback) {
             $handler->then($callback);
         }
@@ -147,13 +155,13 @@ class ReactDriver implements RootEventLoopInterface {
         }
         $this->readStreams[$id] = $resource;
         $cancel = function() use ($id, $resource) {
-            Loop::removeReadStream($resource);
+            $this->loop->removeReadStream($resource);
             unset($this->readStreams[$id]);
         };
         [$handler, $fulfill] = Handler::create($cancel);
         $fulfill = $this->wrap($fulfill, $resource);
 
-        Loop::addReadStream($resource, function() use ($cancel, $fulfill, $resource) {
+        $this->loop->addReadStream($resource, function() use ($cancel, $fulfill, $resource) {
             $cancel();
             $fulfill();
         });
@@ -176,13 +184,13 @@ class ReactDriver implements RootEventLoopInterface {
         }
         $this->writeStreams[$id] = $resource;
         $cancel = function() use ($id, $resource, &$cancelled) {
-            Loop::removeWriteStream($resource);
+            $this->loop->removeWriteStream($resource);
             unset($this->writeStreams[$id]);
         };
         [$handler, $fulfill] = Handler::create($cancel);
         $fulfill = $this->wrap($fulfill, $resource);
 
-        Loop::addWriteStream($resource, function() use ($cancel, $fulfill, $resource) {
+        $this->loop->addWriteStream($resource, function() use ($cancel, $fulfill, $resource) {
             $cancel();
             $fulfill();
         });
@@ -195,15 +203,13 @@ class ReactDriver implements RootEventLoopInterface {
     }
 
     protected function wrap(Closure $callback, mixed ...$args): Closure {
+        ++$this->wrapCount;
         return function() use ($callback, $args) {
+            --$this->wrapCount;
             ++$this->incompleted;
-
             try {
                 if ($this->micLow < $this->micHigh) {
                     $this->runMicrotasks();
-                }
-                if (0 === $this->running) {
-                    return;
                 }
                 $callback(...$args);
                 $this->runMicrotasks();
@@ -217,7 +223,7 @@ class ReactDriver implements RootEventLoopInterface {
     }
 
     protected function runMicrotasks(): void {
-        while ($this->running !== 0 && $this->micLow < $this->micHigh) {
+        while ($this->micLow < $this->micHigh) {
             $callback = $this->microtasks[$this->micLow];
             $args = $this->microtaskArgs[$this->micLow];
             unset($this->microtasks[$this->micLow], $this->microtaskArgs[$this->micLow]);

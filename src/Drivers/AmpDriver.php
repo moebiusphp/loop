@@ -20,20 +20,34 @@ class AmpDriver extends ReactDriver {
             });
         });
 */
-        parent::__construct($exceptionHandler);
         $this->loop = \Amp\Loop::get();
-        \register_shutdown_function($this->run(...));
+        $this->exceptionHandler = $exceptionHandler;
+        $this->scheduled = true;
+        \register_shutdown_function($this->shutdownRun(...));
     }
 
-    public function getTime(): float {
-        return $this->loop->now() / 1000;
+    public function __destruct() {
+    }
+
+    protected function shutdownRun(): void {
+        $this->scheduled = false;
+        if ($this->incompleted > 0) {
+            return;
+        }
+        $this->run();
     }
 
     public function run(): void {
         ++$this->running;
-        if ($this->running === 1) {
-            $this->loop->run();
+        $running = $this->running;
+        $this->loop->run();
+        if ($running === $this->running) {
+            --$this->running;
         }
+    }
+
+    public function getTime(): float {
+        return $this->loop->now() / 1000;
     }
 
     public function stop(): void {
